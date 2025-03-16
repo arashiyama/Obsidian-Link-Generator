@@ -10,7 +10,8 @@ This repository contains a suite of tools designed to enhance the organization a
 2. **tag_linker.py**: Creates links based on shared tags
 3. **genai_linker.py**: Creates links with explanations using Generative AI reasoning
 4. **auto_tag_notes.py**: Automatically generates relevant tags for notes
-5. **obsidian_enhance.py**: Unified tool that combines all the above functionalities
+5. **note_categorizer.py**: Categorizes notes and adds color tags for Graph View visualization
+6. **obsidian_enhance.py**: Unified tool that combines all the above functionalities
 
 ## Requirements
 
@@ -116,6 +117,40 @@ This script reads each note in an Obsidian vault, uses the OpenAI API to generat
 python auto_tag_notes.py
 ```
 
+### note_categorizer.py
+
+#### Description
+
+This script analyzes each note in an Obsidian vault using OpenAI, determines the most appropriate category for the note, and adds special color tags. These tags can be used to visually distinguish different types of notes in Obsidian's graph view.
+
+#### Features
+
+- **AI-Powered Categorization**: Uses OpenAI to intelligently categorize notes into types (person, concept, project, etc.)
+- **Visual Graph Enhancements**: Adds special tags that can be used to color-code notes in Obsidian's graph view
+- **Multiple Categories**: Supports 10 different note categories:
+  - concept
+  - person
+  - project
+  - research
+  - reference
+  - journal
+  - note
+  - tool
+  - event
+  - place
+- **Efficiency Features**:
+  - Caching to avoid redundant API calls
+  - Smart content truncation
+  - Provides setup instructions for Obsidian graph view
+
+#### Example Usage
+
+```bash
+python note_categorizer.py
+```
+
+After running, follow the provided instructions to configure Obsidian's graph view to display different colors for each category.
+
 ### obsidian_enhance.py
 
 #### Description
@@ -143,6 +178,9 @@ python obsidian_enhance.py --auto-tag --tag-link
 # Process more notes with GenAI linker
 python obsidian_enhance.py --genai-link --genai-notes 200
 
+# Run only the categorization tool
+python obsidian_enhance.py --categorize
+
 # Specify a different vault path
 python obsidian_enhance.py --all --vault-path /path/to/vault
 ```
@@ -166,16 +204,59 @@ python obsidian_enhance.py --all --vault-path /path/to/vault
   - More resource-intensive (API costs, processing time)
   - Processes fewer notes at a time due to API rate limits
 
+## Visual Organization with Categories
+
+The note categorizer enhances your Obsidian experience by:
+
+1. **Visual Graph Organization**: Use different colors to distinguish note types in Graph View
+2. **Improved Navigation**: Quickly identify the type of note from its appearance
+3. **Structural Understanding**: See patterns in your knowledge base based on note types
+4. **Filter by Category**: Use category tags to filter and find specific types of notes
+
+To set up colors in Graph View:
+1. Open Obsidian and navigate to Graph View
+2. Click the settings icon
+3. In the Groups section, create a group for each category tag
+4. Choose distinctive colors for each category
+
 ## Tips for Usage
 
 For best results, consider using these tools in sequence:
 
-1. Run `auto_tag_notes.py` first to generate relevant tags for all notes
-2. Run `tag_linker.py` to create initial relationships based on shared tags
-3. Run `semantic_linker.py` to add relationships based on content similarity
-4. Run `genai_linker.py` selectively on important notes to add insightful explanations
+1. Run `note_categorizer.py` first to create a visual organization system
+2. Run `auto_tag_notes.py` to generate relevant tags for all notes
+3. Run `tag_linker.py` to create initial relationships based on shared tags
+4. Run `semantic_linker.py` to add relationships based on content similarity
+5. Run `genai_linker.py` selectively on important notes to add insightful explanations
 
 Alternatively, use the unified `obsidian_enhance.py` script to run all or selected tools in the optimal sequence.
+
+## Contributing and Bug Reports
+
+If you encounter any issues or have suggestions for improvements, please report them through GitHub:
+
+1. Go to the [Issues](https://github.com/jonathancare/obsidian-auto-linking/issues) page
+2. Click on "New Issue"
+3. Choose the appropriate issue template (Bug Report or Feature Request)
+4. Fill in the necessary details
+
+When reporting bugs, please include:
+- The specific script that has the issue
+- Steps to reproduce the problem
+- Expected behavior vs. actual behavior
+- Your operating system and Python version
+- Any error messages or logs
+
+### Contributing Code
+
+If you'd like to contribute code improvements:
+
+1. Fork the repository
+2. Create a new branch for your feature
+3. Make your changes
+4. Submit a Pull Request with a clear description of the changes
+
+All contributions are welcome!
 
 ## Support
 

@@ -8,6 +8,7 @@ This script combines the functionality of all the individual tools:
 - tag_linker.py: Creates links based on shared tags
 - semantic_linker.py: Creates links based on semantic similarity
 - genai_linker.py: Creates links with explanations using GenAI
+- note_categorizer.py: Categorizes notes with visual color tags for graph view
 
 Features:
 - Run all tools in optimal sequence or select specific ones to run
@@ -30,6 +31,7 @@ import auto_tag_notes
 import tag_linker
 import semantic_linker
 import genai_linker
+import note_categorizer
 
 # File to track which notes have been processed by genai_linker
 TRACKING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "genai_processed_notes.json")
@@ -42,6 +44,7 @@ def parse_arguments():
     parser.add_argument("--tag-link", action="store_true", help="Run tag-based linking")
     parser.add_argument("--semantic-link", action="store_true", help="Run semantic linking")
     parser.add_argument("--genai-link", action="store_true", help="Run GenAI linking")
+    parser.add_argument("--categorize", action="store_true", help="Run note categorization for graph coloring")
     parser.add_argument("--all", action="store_true", help="Run all enhancement tools")
     parser.add_argument("--genai-notes", type=int, default=100, 
                        help="Number of notes to process with GenAI linker (default: 100)")
@@ -179,9 +182,17 @@ def main():
         sys.exit(1)
     
     # If no specific tool is selected, do nothing unless --all is set
-    if not (args.auto_tag or args.tag_link or args.semantic_link or args.genai_link) and not args.all:
+    if not (args.auto_tag or args.tag_link or args.semantic_link or args.genai_link or args.categorize) and not args.all:
         print("No tools selected to run. Use --help to see available options.")
         sys.exit(1)
+    
+    # Run categorization
+    if args.all or args.categorize:
+        print("\n===== Running Note Categorization =====")
+        notes = note_categorizer.load_notes(vault_path)
+        categorized = note_categorizer.categorize_notes(notes)
+        saved = note_categorizer.save_notes(notes, vault_path)
+        print(f"Note categorization: Processed {saved} notes")
     
     # Run auto-tagging
     if args.all or args.auto_tag:
