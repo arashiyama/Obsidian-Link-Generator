@@ -155,13 +155,17 @@ After running, follow the provided instructions to configure Obsidian's graph vi
 
 #### Description
 
-This unified script combines the functionality of all the individual tools into a single command-line interface. It allows you to run any combination of the tools in the optimal sequence and tracks which notes have been processed by the GenAI linker for full vault coverage over time.
+This unified script combines the functionality of all the individual tools into a single command-line interface. It allows you to run any combination of the tools in the optimal sequence and tracks which notes have been processed by each tool for complete vault coverage over time.
 
 #### Features
 
 - Run all tools in the optimal sequence with a single command
 - Select specific tools to run using command-line flags
-- Tracks which notes have been processed by genai_linker to achieve full coverage incrementally
+- **Smart Session Memory**:
+  - Tracks which notes have been processed by each tool across sessions
+  - Only processes new or modified notes by default to save time and API costs
+  - Detects when note content has changed and prioritizes those notes for reprocessing
+  - Maintains separate tracking data for each tool
 - Prioritizes processing unprocessed notes when using the GenAI linker
 - Provides progress statistics for GenAI linking coverage
 - Customizable number of notes to process with GenAI linker per run
@@ -180,6 +184,9 @@ python obsidian_enhance.py --genai-link --genai-notes 200
 
 # Run only the categorization tool
 python obsidian_enhance.py --categorize
+
+# Force processing all notes even if previously processed
+python obsidian_enhance.py --all --force-all
 
 # Specify a different vault path
 python obsidian_enhance.py --all --vault-path /path/to/vault
@@ -218,6 +225,22 @@ To set up colors in Graph View:
 2. Click the settings icon
 3. In the Groups section, create a group for each category tag
 4. Choose distinctive colors for each category
+
+## Session Memory and Incremental Processing
+
+The tools have been designed to intelligently remember which notes have been processed across multiple sessions:
+
+1. **Efficiency**: By default, only new or modified notes are processed in subsequent runs
+2. **Change Detection**: The system tracks content hashes to detect when notes have changed
+3. **Progress Persistence**: Processing progress is saved between sessions in `.tracking` files
+4. **Coverage Tracking**: Statistics show overall coverage for tools like GenAI linker
+5. **Forced Processing**: Use the `--force-all` flag to reprocess all notes regardless of history
+
+Benefits of this approach:
+- Significant time and API cost savings in large vaults
+- Incremental improvement of your knowledge base
+- Full coverage of GenAI linking over multiple sessions
+- No duplicate work when rerunning the tools
 
 ## Tips for Usage
 
