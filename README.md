@@ -10,6 +10,7 @@ This repository contains a suite of tools designed to enhance the organization a
 2. **tag_linker.py**: Creates links based on shared tags
 3. **genai_linker.py**: Creates links with explanations using Generative AI reasoning
 4. **auto_tag_notes.py**: Automatically generates relevant tags for notes
+5. **obsidian_enhance.py**: Unified tool that combines all the above functionalities
 
 ## Requirements
 
@@ -115,6 +116,37 @@ This script reads each note in an Obsidian vault, uses the OpenAI API to generat
 python auto_tag_notes.py
 ```
 
+### obsidian_enhance.py
+
+#### Description
+
+This unified script combines the functionality of all the individual tools into a single command-line interface. It allows you to run any combination of the tools in the optimal sequence and tracks which notes have been processed by the GenAI linker for full vault coverage over time.
+
+#### Features
+
+- Run all tools in the optimal sequence with a single command
+- Select specific tools to run using command-line flags
+- Tracks which notes have been processed by genai_linker to achieve full coverage incrementally
+- Prioritizes processing unprocessed notes when using the GenAI linker
+- Provides progress statistics for GenAI linking coverage
+- Customizable number of notes to process with GenAI linker per run
+
+#### Example Usage
+
+```bash
+# Run all tools with default settings
+python obsidian_enhance.py --all
+
+# Run only specific tools
+python obsidian_enhance.py --auto-tag --tag-link
+
+# Process more notes with GenAI linker
+python obsidian_enhance.py --genai-link --genai-notes 200
+
+# Specify a different vault path
+python obsidian_enhance.py --all --vault-path /path/to/vault
+```
+
 ## Comparison of Linking Approaches
 
 ### Semantic Linker
@@ -142,6 +174,14 @@ For best results, consider using these tools in sequence:
 2. Run `tag_linker.py` to create initial relationships based on shared tags
 3. Run `semantic_linker.py` to add relationships based on content similarity
 4. Run `genai_linker.py` selectively on important notes to add insightful explanations
+
+Alternatively, use the unified `obsidian_enhance.py` script to run all or selected tools in the optimal sequence.
+
+## Support
+
+If you find these tools useful, consider buying me a coffee:
+
+<a href="https://buymeacoffee.com/jonathancare" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
 ## Author
 
