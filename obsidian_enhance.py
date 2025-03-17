@@ -30,6 +30,7 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from datetime import datetime
 import shutil
+from tqdm import tqdm
 import utils
 import signal_handler
 
@@ -52,6 +53,15 @@ CATEGORIZER_TRACKING_FILE = os.path.join(TRACKING_DIR, "categorizer_processed_no
 if not os.path.exists(TRACKING_DIR):
     os.makedirs(TRACKING_DIR)
 
+# Global verbose flag
+VERBOSE = False
+
+# Verbose print function
+def vprint(*args, **kwargs):
+    """Print only if verbose mode is enabled."""
+    if VERBOSE:
+        print("[VERBOSE]", *args, **kwargs)
+
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Enhance Obsidian vault with auto-tagging and linking")
@@ -66,12 +76,16 @@ def parse_arguments():
     parser.add_argument("--clean-tracking", action="store_true", help="Also clear tracking data when cleaning")
     parser.add_argument("--genai-notes", type=int, default=100, 
                        help="Number of notes to process with GenAI linker (default: 100)")
+    parser.add_argument("--batch-size", type=int, default=50,
+                       help="Maximum number of notes to process in a batch for categorization (default: 50)")
     parser.add_argument("--force-all", action="store_true", 
                        help="Force processing all notes even if previously processed")
     parser.add_argument("--vault-path", type=str, 
                        help="Path to Obsidian vault (defaults to OBSIDIAN_VAULT_PATH env variable)")
     parser.add_argument("--deduplicate", action="store_true",
                        help="Run deduplication of links and tags across all notes")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                       help="Display detailed processing information")
     
     return parser.parse_args()
 
@@ -80,16 +94,24 @@ def load_tracking_data(tracking_file):
     if os.path.exists(tracking_file):
         try:
             with open(tracking_file, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                vprint(f"Loaded tracking data from {tracking_file}")
+                vprint(f"Previously processed notes: {len(data.get('processed_notes', []))}")
+                vprint(f"Previous sessions: {len(data.get('timestamps', []))}")
+                return data
         except Exception as e:
             print(f"Error reading tracking file {tracking_file}: {str(e)}")
             return {"processed_notes": [], "timestamps": []}
     else:
+        vprint(f"No existing tracking file found at {tracking_file}, creating new tracking data")
         return {"processed_notes": [], "timestamps": []}
 
 def save_tracking_data(tracking_data, tracking_file):
     """Save tracking data of processed notes."""
     try:
+        vprint(f"Saving tracking data to {tracking_file}")
+        vprint(f"Total processed notes in tracking data: {len(tracking_data.get('processed_notes', []))}")
+        vprint(f"Total timestamps in tracking data: {len(tracking_data.get('timestamps', []))}")
         with open(tracking_file, 'w') as f:
             json.dump(tracking_data, f, indent=2)
     except Exception as e:
@@ -104,6 +126,7 @@ def filter_notes_for_processing(notes, tracking_data, force_all=False):
     processed_data = {path: {"processed": False, "changed": False} for path in notes.keys()}
     
     if force_all:
+        vprint("Force-all mode enabled, processing all notes regardless of history")
         # Process all notes if forced
         for path in notes.keys():
             processed_data[path]["processed"] = True
@@ -112,6 +135,11 @@ def filter_notes_for_processing(notes, tracking_data, force_all=False):
     
     # Check if we have hashes of previously processed notes
     note_hashes = tracking_data.get("note_hashes", {})
+    vprint(f"Found {len(note_hashes)} previously hashed notes in tracking data")
+    
+    new_notes = 0
+    changed_notes = 0
+    unchanged_notes = 0
     
     for path, content in notes.items():
         # Skip if it's a directory path
@@ -124,16 +152,24 @@ def filter_notes_for_processing(notes, tracking_data, force_all=False):
         if path not in tracking_data["processed_notes"]:
             processed_data[path]["processed"] = True
             processed_data[path]["changed"] = True
+            new_notes += 1
+            vprint(f"New note to process: {os.path.basename(path)}")
         # Note content has changed since last processing
         elif path in note_hashes and note_hashes[path] != current_hash:
             processed_data[path]["processed"] = True
             processed_data[path]["changed"] = True
+            changed_notes += 1
+            vprint(f"Changed note to process: {os.path.basename(path)}")
+        else:
+            unchanged_notes += 1
             
         # Update the hash
         note_hashes[path] = current_hash
     
     # Update the hashes in tracking data
     tracking_data["note_hashes"] = note_hashes
+    
+    vprint(f"Filtering results: {new_notes} new notes, {changed_notes} changed notes, {unchanged_notes} unchanged notes")
     
     return processed_data
 
@@ -348,11 +384,13 @@ def run_semantic_linking(vault_path, force_all=False):
 def run_custom_genai_linking(notes, tracking_data, num_notes=100, force_all=False):
     """Run genai_linker.py with tracking of processed notes."""
     # Extract summaries for all notes
+    print("Extracting note summaries...")
     summaries = genai_linker.extract_titles_and_summaries(notes)
     
     # Extract existing links from all notes
+    print("Analyzing existing links...")
     existing_links = {}
-    for path, note_data in notes.items():
+    for path, note_data in tqdm(notes.items(), desc="Extracting existing links", unit="note"):
         content = note_data["content"] if isinstance(note_data, dict) else note_data
         existing_links[path] = utils.extract_existing_links(content)
     
@@ -363,7 +401,7 @@ def run_custom_genai_linking(notes, tracking_data, num_notes=100, force_all=Fals
     updated = 0
     skipped = 0
     
-    for path in paths_to_process:
+    for path in tqdm(paths_to_process, desc="Finding relevant notes", unit="note"):
         try:
             # Get existing links for this note
             current_links = existing_links.get(path, [])
@@ -444,18 +482,23 @@ def run_custom_genai_linking(notes, tracking_data, num_notes=100, force_all=Fals
     
     return updated
 
-def run_note_categorization(vault_path, force_all=False):
+def run_note_categorization(vault_path, force_all=False, batch_size=50):
     """Run note categorization with tracking."""
+    vprint(f"Starting note categorization for vault: {vault_path}")
+    vprint(f"Force all mode: {force_all}, Batch size: {batch_size}")
+    
     tracking_data = load_tracking_data(CATEGORIZER_TRACKING_FILE)
     
     # Add timestamp to tracking data
     if "timestamps" not in tracking_data:
         tracking_data["timestamps"] = []
     
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     tracking_data["timestamps"].append({
-        "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "date": timestamp,
         "operation": "categorize"
     })
+    vprint(f"Added timestamp {timestamp} to tracking data")
     
     # Load notes
     notes = note_categorizer.load_notes(vault_path)
@@ -463,8 +506,11 @@ def run_note_categorization(vault_path, force_all=False):
         print("No notes found for categorization!")
         return 0
     
+    vprint(f"Loaded {len(notes)} notes from vault for categorization")
+    
     # Filter notes to process
     if not force_all:
+        vprint("Filtering notes based on tracking data and content changes")
         processed_data = filter_notes_for_processing(notes, tracking_data)
         notes_to_process = {path: content for path, content in notes.items() 
                            if processed_data[path]["processed"]}
@@ -474,31 +520,81 @@ def run_note_categorization(vault_path, force_all=False):
             return 0
             
         print(f"Categorizing {len(notes_to_process)} out of {len(notes)} total notes...")
+        vprint(f"Will process {len(notes_to_process)} notes, skipping {len(notes) - len(notes_to_process)} unchanged notes")
         
         # Replace the notes dict with only the ones we want to process
-        # Need to make a copy to keep the original references for when we run custom categorization
-        for path in list(notes.keys()):
-            if path not in notes_to_process:
-                del notes[path]
+        notes_before = len(notes)
+        filtered_notes = {}
+        for path, content in notes.items():
+            if path in notes_to_process:
+                filtered_notes[path] = content
+        notes = filtered_notes
+        vprint(f"Filtered notes dictionary from {notes_before} to {len(notes)} entries")
+    else:
+        vprint(f"Force-all mode enabled, will process all {len(notes)} notes")
     
-    # Run categorization on the filtered notes
-    categorized = note_categorizer.categorize_notes(notes)
-    saved = note_categorizer.save_notes(notes, vault_path)
+    # Process notes in batches to avoid memory issues or rate limiting
+    total_notes = len(notes)
+    saved_total = 0
     
-    # Update tracking data
-    for path in notes.keys():
-        if path not in tracking_data["processed_notes"]:
-            tracking_data["processed_notes"].append(path)
+    if total_notes > batch_size:
+        print(f"Processing notes in batches of {batch_size} to avoid memory issues or API rate limits")
         
-        # Update note hash in tracking data
-        if "note_hashes" not in tracking_data:
-            tracking_data["note_hashes"] = {}
-        tracking_data["note_hashes"][path] = utils.generate_note_hash(notes[path])
+        # Convert to list for easy batching
+        note_items = list(notes.items())
+        num_batches = (total_notes + batch_size - 1) // batch_size  # Ceiling division
+        
+        for i in range(num_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, total_notes)
+            
+            print(f"\nProcessing batch {i+1}/{num_batches} (notes {start_idx+1}-{end_idx} of {total_notes})")
+            batch_notes = dict(note_items[start_idx:end_idx])
+            
+            vprint(f"Running categorization for batch with {len(batch_notes)} notes")
+            categorized = note_categorizer.categorize_notes(batch_notes)
+            saved = note_categorizer.save_notes(batch_notes, vault_path)
+            saved_total += saved
+            
+            # Update tracking data for this batch
+            for path in batch_notes.keys():
+                if path not in tracking_data["processed_notes"]:
+                    tracking_data["processed_notes"].append(path)
+                
+                # Update note hash in tracking data
+                if "note_hashes" not in tracking_data:
+                    tracking_data["note_hashes"] = {}
+                tracking_data["note_hashes"][path] = utils.generate_note_hash(batch_notes[path])
+            
+            # Save tracking data after each batch
+            save_tracking_data(tracking_data, CATEGORIZER_TRACKING_FILE)
+            print(f"Batch {i+1}/{num_batches} completed: Processed {saved} notes")
+    else:
+        # Run categorization on all filtered notes at once since it's within batch size
+        vprint("Starting note categorization using OpenAI API")
+        categorized = note_categorizer.categorize_notes(notes)
+        vprint(f"Categorization completed, saving notes to disk")
+        saved = note_categorizer.save_notes(notes, vault_path)
+        saved_total = saved
+        vprint(f"Saved {saved} categorized notes to disk")
+        
+        # Update tracking data
+        new_processed = 0
+        for path in notes.keys():
+            if path not in tracking_data["processed_notes"]:
+                tracking_data["processed_notes"].append(path)
+                new_processed += 1
+            
+            # Update note hash in tracking data
+            if "note_hashes" not in tracking_data:
+                tracking_data["note_hashes"] = {}
+            tracking_data["note_hashes"][path] = utils.generate_note_hash(notes[path])
+        
+        vprint(f"Added {new_processed} new entries to processed notes tracking")
+        save_tracking_data(tracking_data, CATEGORIZER_TRACKING_FILE)
     
-    save_tracking_data(tracking_data, CATEGORIZER_TRACKING_FILE)
-    
-    print(f"Note categorization: Processed {saved} notes")
-    return saved
+    print(f"Note categorization: Processed {saved_total} notes in total")
+    return saved_total
 
 def clean_notes(vault_path, clear_tracking=False):
     """
@@ -514,21 +610,26 @@ def clean_notes(vault_path, clear_tracking=False):
     cleaned = 0
     
     print("Loading notes...")
+    md_files = []
+    # First, collect all markdown files
     for root, dirs, files in os.walk(vault_path):
         # Skip hidden directories
         dirs[:] = [d for d in dirs if not d.startswith('.')]
-        
         for file in files:
             if file.endswith(".md"):
-                path = os.path.join(root, file)
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                        notes[path] = content
-                        count += 1
-                except Exception as e:
-                    print(f"Error reading file {path}: {str(e)}")
-                    skipped += 1
+                md_files.append(os.path.join(root, file))
+    
+    # Now load the files with a progress bar
+    print(f"Found {len(md_files)} markdown files")
+    for path in tqdm(md_files, desc="Loading files", unit="file"):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+                notes[path] = content
+                count += 1
+        except Exception as e:
+            print(f"Error reading file {path}: {str(e)}")
+            skipped += 1
     
     print(f"Loaded {count} notes, skipped {skipped} due to errors")
     
@@ -540,7 +641,7 @@ def clean_notes(vault_path, clear_tracking=False):
     ]
     
     # Remove auto-generated links from each note
-    for path, content in notes.items():
+    for path, content in tqdm(notes.items(), desc="Cleaning notes", unit="note"):
         original_content = content
         
         # Remove each section if it exists
@@ -585,22 +686,27 @@ def deduplicate_links_and_tags(vault_path):
     skipped = 0
     deduplicated = 0
     
-    print("Loading notes...")
+    # First collect all markdown files
+    print("Scanning vault directory...")
+    md_files = []
     for root, dirs, files in os.walk(vault_path):
         # Skip hidden directories
         dirs[:] = [d for d in dirs if not d.startswith('.')]
-        
         for file in files:
             if file.endswith(".md"):
-                path = os.path.join(root, file)
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                        notes[path] = content
-                        count += 1
-                except Exception as e:
-                    print(f"Error reading file {path}: {str(e)}")
-                    skipped += 1
+                md_files.append(os.path.join(root, file))
+    
+    # Load the files with a progress bar
+    print(f"Found {len(md_files)} markdown files")
+    for path in tqdm(md_files, desc="Loading files", unit="file"):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+                notes[path] = content
+                count += 1
+        except Exception as e:
+            print(f"Error reading file {path}: {str(e)}")
+            skipped += 1
     
     print(f"Loaded {count} notes, skipped {skipped} due to errors")
     
@@ -612,7 +718,8 @@ def deduplicate_links_and_tags(vault_path):
     ]
     
     # Process each note
-    for path, content in notes.items():
+    modified_notes = []
+    for path, content in tqdm(notes.items(), desc="Analyzing notes", unit="note"):
         original_content = content
         modified = False
         
@@ -646,8 +753,14 @@ def deduplicate_links_and_tags(vault_path):
                     content = updated_content
                     modified = True
         
-        # Save if changes were made
+        # Track modified notes to save them in a batch later
         if modified:
+            modified_notes.append((path, content))
+    
+    # Save all modified notes with a progress bar
+    if modified_notes:
+        print(f"Saving {len(modified_notes)} deduplicated notes...")
+        for path, content in tqdm(modified_notes, desc="Saving deduplicated notes", unit="note"):
             try:
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(content)
@@ -664,6 +777,10 @@ def cleanup_before_exit():
     # Add any necessary cleanup here, like closing file handles
     # or ensuring tracking data is saved, etc.
     
+    if VERBOSE:
+        print("[VERBOSE] Cleanup completed with verbose mode enabled")
+        print("[VERBOSE] Use -v or --verbose flag for detailed processing information")
+    
     print("Cleanup completed. Goodbye!")
 
 def main():
@@ -677,6 +794,14 @@ def main():
     print(f"Starting Obsidian vault enhancement at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     args = parse_arguments()
+    
+    # Set global verbose flag
+    global VERBOSE
+    VERBOSE = args.verbose
+    
+    if VERBOSE:
+        print("\n===== Running in VERBOSE mode =====")
+        vprint("Command-line arguments:", vars(args))
     
     # Set vault path from command line or environment variable
     vault_path = args.vault_path or os.getenv("OBSIDIAN_VAULT_PATH")
@@ -721,7 +846,7 @@ def main():
     # Run categorization
     if args.all or args.categorize:
         print("\n===== Running Note Categorization =====")
-        saved = run_note_categorization(vault_path, args.force_all)
+        saved = run_note_categorization(vault_path, args.force_all, args.batch_size)
         if saved > 0:
             print(f"Note categorization: Processed {saved} notes")
             note_categorizer.print_obsidian_setup_instructions()
@@ -776,4 +901,4 @@ def main():
     print(f"\nEnhancement completed in {elapsed_time:.2f} seconds")
 
 if __name__ == "__main__":
-    main() 
+    main()

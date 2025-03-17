@@ -220,43 +220,74 @@ def categorize_notes(notes):
     """Categorize multiple notes and update them with categories."""
     print(f"Categorizing {len(notes)} out of {len(notes)} total notes...")
     
-    # Load or create the taxonomy
+    # Load or create the taxonomy - with timeout handling
     taxonomy_path = "category_taxonomy.json"
-    taxonomy = load_or_create_category_taxonomy(taxonomy_path)
+    try:
+        print("Loading or creating category taxonomy...")
+        taxonomy = load_or_create_category_taxonomy(taxonomy_path)
+        print("Taxonomy loaded successfully")
+    except Exception as e:
+        print(f"Error in taxonomy loading: {str(e)}")
+        # Create an empty taxonomy to continue processing
+        taxonomy = {}
     
     updated_count = 0
     skipped_count = 0
     
-    for path, note_data in notes.items():
+    # Process notes in batches to provide progress feedback
+    total_notes = len(notes)
+    progress_interval = max(1, total_notes // 20)  # Show progress every 5%
+    
+    print(f"Beginning processing of {total_notes} notes...")
+    for i, (path, note_data) in enumerate(notes.items()):
+        # Show progress every 5% of notes
+        if i % progress_interval == 0:
+            print(f"Progress: {i}/{total_notes} notes processed ({i/total_notes*100:.1f}%)")
+            
         try:
             content = note_data["content"] if isinstance(note_data, dict) else note_data
             title = os.path.splitext(os.path.basename(path))[0]
             
             # Get category suggestions
-            result = categorize_note(content, title, taxonomy)
+            try:
+                print(f"Categorizing note: {title}...")
+                result = categorize_note(content, title, taxonomy)
+                print(f"Got categories for '{title}': {result.get('categories', [])}")
+            except Exception as e:
+                print(f"Error getting categories for {title}: {str(e)}")
+                skipped_count += 1
+                continue
             
             if not result["categories"]:
+                print(f"No categories suggested for {title}")
                 skipped_count += 1
                 continue
             
             # Update the note with categories
-            if update_note_with_categories(path, content, result["categories"]):
-                updated_count += 1
-                
-                # Update the note content in the dictionary
-                if isinstance(note_data, dict):
-                    # Re-read the file to get updated content
-                    with open(path, "r", encoding="utf-8") as f:
-                        note_data["content"] = f.read()
+            try:
+                if update_note_with_categories(path, content, result["categories"]):
+                    updated_count += 1
+                    print(f"Updated categories for {title}")
+                    
+                    # Update the note content in the dictionary
+                    if isinstance(note_data, dict):
+                        # Re-read the file to get updated content
+                        with open(path, "r", encoding="utf-8") as f:
+                            note_data["content"] = f.read()
+                    else:
+                        # Re-read the file to get updated content
+                        with open(path, "r", encoding="utf-8") as f:
+                            notes[path] = f.read()
+                    
+                    # Update the taxonomy
+                    if result["taxonomy_updates"]:
+                        taxonomy = update_taxonomy(taxonomy, result["taxonomy_updates"])
+                        print(f"Updated taxonomy with entries from {title}")
                 else:
-                    # Re-read the file to get updated content
-                    with open(path, "r", encoding="utf-8") as f:
-                        notes[path] = f.read()
-                
-                # Update the taxonomy
-                if result["taxonomy_updates"]:
-                    taxonomy = update_taxonomy(taxonomy, result["taxonomy_updates"])
-            else:
+                    print(f"Failed to update categories for {title}")
+                    skipped_count += 1
+            except Exception as e:
+                print(f"Error updating note {title}: {str(e)}")
                 skipped_count += 1
                 
         except Exception as e:
@@ -264,7 +295,12 @@ def categorize_notes(notes):
             skipped_count += 1
     
     # Save the updated taxonomy
-    save_category_taxonomy(taxonomy, taxonomy_path)
+    try:
+        print("Saving updated category taxonomy...")
+        save_category_taxonomy(taxonomy, taxonomy_path)
+        print("Taxonomy saved successfully")
+    except Exception as e:
+        print(f"Error saving taxonomy: {str(e)}")
     
     print(f"Categorization completed: {updated_count} notes updated, {skipped_count} skipped")
     return updated_count
