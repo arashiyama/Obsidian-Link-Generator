@@ -113,10 +113,14 @@ def build_relations(notes, note_tags, tag_to_notes):
     
     return relations
 
-def update_notes_with_relations(notes, relations):
+def update_notes_with_relations(notes, relations, existing_links=None):
     """Update notes with related notes sections."""
     updated = 0
     skipped = 0
+    
+    # If no existing links provided, create an empty dictionary
+    if existing_links is None:
+        existing_links = {}
     
     print("Updating notes with relations...")
     for path, related_paths in tqdm(relations.items()):
@@ -125,23 +129,64 @@ def update_notes_with_relations(notes, relations):
         
         try:
             content = notes[path]["content"]
+            current_links = existing_links.get(path, [])
             
-            # Create links section
-            links = []
+            # Track which links we've already added to avoid duplicates
+            added_links = set()
+            
+            # Extract existing links from the tag-based section if it exists
+            existing_link_entries = []
+            existing_link_names = []
+            
+            if "## Related Notes (by Tag)" in content:
+                # Extract existing related notes section
+                existing_section = re.search(r"## Related Notes \(by Tag\)\n(.*?)(?=\n## |\n#|\Z)", 
+                                           content, flags=re.DOTALL)
+                if existing_section:
+                    # Save the existing links to preserve their details
+                    existing_link_entries = existing_section.group(1).split("\n")
+                    
+                    # Extract note names from links
+                    for entry in existing_link_entries:
+                        link_match = re.search(r'\[\[(.*?)\]\]', entry)
+                        if link_match:
+                            note_name = link_match.group(1)
+                            existing_link_names.append(note_name)
+                            added_links.add(note_name)
+            
+            # Create new links section
+            all_links = []
+            
+            # First add existing links that we want to keep
+            for entry in existing_link_entries:
+                if entry.strip():  # Skip empty lines
+                    all_links.append(entry)
+            
+            # Then add new links, avoiding duplicates
             for related_path, count in related_paths:
                 related_filename = notes[related_path]["filename"]
                 # Create the Obsidian link using just the filename without extension
                 note_name = os.path.splitext(related_filename)[0]
-                links.append(f"- [[{note_name}]] ({count} shared tags)")
+                
+                # Skip if this note is already linked in the document or existing section
+                if note_name in current_links or note_name in added_links:
+                    continue
+                
+                all_links.append(f"- [[{note_name}]] ({count} shared tags)")
+                added_links.add(note_name)
             
-            link_section = "\n\n## Related Notes (by Tag)\n" + "\n".join(links)
+            # Skip if we have no links to add
+            if not all_links:
+                continue
+                
+            link_section = "\n\n## Related Notes (by Tag)\n" + "\n".join(all_links)
             
             # Check if the note already has a related notes section
             if "## Related Notes (by Tag)" in content:
                 # Replace existing section
                 content = re.sub(
                     r"## Related Notes \(by Tag\).*?(?=\n## |\n#|\Z)", 
-                    f"## Related Notes (by Tag)\n{chr(10).join(links)}\n\n", 
+                    f"## Related Notes (by Tag)\n{chr(10).join(all_links)}\n\n", 
                     content, 
                     flags=re.DOTALL
                 )

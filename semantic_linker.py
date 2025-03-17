@@ -245,20 +245,112 @@ def get_embeddings(texts):
     
     return np.array(all_embeddings)
 
-def generate_links(notes, embeddings, filenames):
+def generate_links(notes, embeddings, filenames, existing_links=None):
+    """
+    Generate semantic links between notes based on embedding similarity.
+    
+    Args:
+        notes: Dictionary of notes (path -> content)
+        embeddings: Array of note embeddings
+        filenames: List of filenames corresponding to embeddings
+        existing_links: Dictionary of existing links for each note (path -> [links])
+    """
     similarities = cosine_similarity(embeddings)
     np.fill_diagonal(similarities, 0)
+    
+    # If no existing links provided, create an empty dictionary
+    if existing_links is None:
+        existing_links = {}
+        # Extract links from all notes
+        for file, content in notes.items():
+            existing_links[file] = extract_existing_links(content)
 
     for idx, file in enumerate(filenames):
+        # Skip if file is not in notes (shouldn't happen but just in case)
+        if file not in notes:
+            continue
+            
+        # Get existing links for this note
+        current_links = existing_links.get(file, [])
+        
+        # Find related notes
         related_indices = np.where(similarities[idx] > SIMILARITY_THRESHOLD)[0]
-        links = [f"[[{filenames[i][:-3]}]]" for i in related_indices]
+        
+        # Get note names from indices, avoiding duplicates with existing links
+        new_links = []
+        for i in related_indices:
+            # Extract note name without extension
+            note_name = os.path.splitext(os.path.basename(filenames[i]))[0]
+            
+            # Skip if this note is already linked anywhere in the document
+            if note_name in current_links:
+                continue
+                
+            new_links.append(f"[[{note_name}]]")
+            
+            # Add to current links to avoid duplicates in future iterations
+            current_links.append(note_name)
+        
+        # Extract existing related notes section if it exists
+        existing_link_entries = []
+        if "## Related Notes" in notes[file]:
+            # Extract existing related notes section
+            existing_section = re.search(r"## Related Notes\n(.*?)(?=\n## |\n#|\Z)", 
+                                       notes[file], flags=re.DOTALL)
+            if existing_section:
+                # Extract existing links
+                for line in existing_section.group(1).split("\n"):
+                    if line.strip():
+                        link_match = re.search(r'- \[\[(.*?)\]\]', line)
+                        if link_match:
+                            existing_link_entries.append(line)
+        
+        # Combine all links to be included in the section
+        all_links = []
+        
+        # Add existing links first
+        note_names_added = set()
+        for entry in existing_link_entries:
+            link_match = re.search(r'- \[\[(.*?)\]\]', entry)
+            if link_match:
+                note_name = link_match.group(1)
+                if note_name not in note_names_added:
+                    all_links.append(entry)
+                    note_names_added.add(note_name)
+        
+        # Add new links
+        for link in new_links:
+            note_name = link[2:-2]  # Extract note name without brackets
+            if note_name not in note_names_added:
+                all_links.append(f"- {link}")
+                note_names_added.add(note_name)
+        
+        # Skip if we have no links to add
+        if not all_links:
+            continue
+            
+        # Create the updated section
+        link_section = "\n\n## Related Notes\n" + "\n".join(all_links)
+        
+        # Update note content
+        if "## Related Notes" in notes[file]:
+            # Replace existing section
+            notes[file] = re.sub(r"## Related Notes.*?(?=\n## |\n#|\Z)", 
+                               link_section, notes[file], flags=re.DOTALL)
+        else:
+            # Add new section
+            notes[file] += link_section
 
-        if links:
-            link_section = "\n\n## Related Notes\n" + "\n".join(f"- {link}" for link in links)
-            if "## Related Notes" not in notes[file]:
-                notes[file] += link_section
-            else:
-                notes[file] = re.sub(r"## Related Notes.*", link_section, notes[file], flags=re.DOTALL)
+def extract_existing_links(content):
+    """Extract all existing wiki links from a note."""
+    links = []
+    
+    # Find all wiki links in the content
+    for match in re.finditer(r'\[\[(.*?)(?:\|.*?)?\]\]', content):
+        link = match.group(1).strip()
+        links.append(link)
+    
+    return links
 
 def save_notes(notes, vault_path):
     for file, content in notes.items():

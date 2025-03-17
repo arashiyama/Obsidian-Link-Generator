@@ -168,6 +168,19 @@ def select_genai_notes(notes, tracking_data, num_notes=100, force_all=False):
     
     return selected_notes
 
+def extract_existing_links(content):
+    """Extract all existing wiki links from a note."""
+    # Regular expression to match wiki links [[link]] or [[link|alias]]
+    # This will capture just the link part (before the pipe if there is one)
+    links = []
+    
+    # Find all wiki links in the content
+    for match in re.finditer(r'\[\[(.*?)(?:\|.*?)?\]\]', content):
+        link = match.group(1).strip()
+        links.append(link)
+    
+    return links
+
 def run_auto_tagging(vault_path, force_all=False):
     """Run auto-tagging with tracking."""
     tracking_data = load_tracking_data(AUTO_TAG_TRACKING_FILE)
@@ -231,6 +244,12 @@ def run_tag_linking(vault_path, force_all=False):
         print("No notes found for tag linking!")
         return 0
     
+    # Extract existing links from all notes
+    existing_links = {}
+    for path, note in notes.items():
+        content = note["content"] if isinstance(note, dict) else note
+        existing_links[path] = extract_existing_links(content)
+    
     # Extract tags from all notes (this needs to be done on all notes)
     note_tags, tag_to_notes = tag_linker.extract_tags(notes)
     
@@ -252,11 +271,11 @@ def run_tag_linking(vault_path, force_all=False):
             return 0
             
         print(f"Tag linking: Updating {len(filtered_relations)} out of {len(notes)} total notes...")
-        updated = tag_linker.update_notes_with_relations(notes, filtered_relations)
+        updated = tag_linker.update_notes_with_relations(notes, filtered_relations, existing_links)
     else:
         # Process all notes
         print(f"Tag linking: Processing all {len(notes)} notes...")
-        updated = tag_linker.update_notes_with_relations(notes, relations)
+        updated = tag_linker.update_notes_with_relations(notes, relations, existing_links)
     
     saved = tag_linker.save_notes(notes)
     
@@ -289,6 +308,11 @@ def run_semantic_linking(vault_path, force_all=False):
         print("No notes found for semantic linking!")
         return 0
     
+    # Extract existing links from all notes
+    existing_links = {}
+    for path, content in notes.items():
+        existing_links[path] = extract_existing_links(content)
+    
     # For semantic linking, we need to process all notes to compute similarities
     # but we can be selective about which ones we update
     filenames, contents = list(notes.keys()), list(notes.values())
@@ -316,18 +340,48 @@ def run_semantic_linking(vault_path, force_all=False):
                 similarities[idx] = 0  # Set self-similarity to 0
                 
                 related_indices = np.where(similarities > semantic_linker.SIMILARITY_THRESHOLD)[0]
-                links = [f"[[{filenames[i][:-3]}]]" for i in related_indices]
                 
-                if links:
-                    link_section = "\n\n## Related Notes\n" + "\n".join(f"- {link}" for link in links)
-                    if "## Related Notes" not in notes[file]:
-                        notes[file] += link_section
+                # Get note names from indices, avoiding duplicates with existing links
+                current_links = existing_links.get(file, [])
+                new_links = []
+                
+                for i in related_indices:
+                    # Extract note name without extension
+                    note_name = os.path.splitext(os.path.basename(filenames[i]))[0]
+                    
+                    # Only add if not already linked
+                    if note_name not in current_links:
+                        new_links.append(f"[[{note_name}]]")
+                
+                # Combine with existing related notes section if it exists
+                if new_links:
+                    if "## Related Notes" in notes[file]:
+                        # Extract existing related notes section
+                        existing_section = re.search(r"## Related Notes\n(.*?)(?=\n## |\n#|\Z)", 
+                                                    notes[file], flags=re.DOTALL)
+                        if existing_section:
+                            # Extract existing links from the section
+                            existing_links_in_section = re.findall(r'- \[\[(.*?)\]\]', 
+                                                                   existing_section.group(1))
+                            
+                            # Add existing links back, avoiding duplicates
+                            for link in existing_links_in_section:
+                                link_entry = f"[[{link}]]"
+                                if link_entry not in new_links:
+                                    new_links.append(link_entry)
+                        
+                        # Replace existing section with merged content
+                        link_section = "\n\n## Related Notes\n" + "\n".join(f"- {link}" for link in new_links)
+                        notes[file] = re.sub(r"## Related Notes.*?(?=\n## |\n#|\Z)", 
+                                            link_section, notes[file], flags=re.DOTALL)
                     else:
-                        notes[file] = re.sub(r"## Related Notes.*", link_section, notes[file], flags=re.DOTALL)
+                        # Add new section
+                        link_section = "\n\n## Related Notes\n" + "\n".join(f"- {link}" for link in new_links)
+                        notes[file] += link_section
     else:
-        # Process all notes
+        # Process all notes, but still avoid duplicating links
         print(f"Semantic linking: Processing all {len(notes)} notes...")
-        semantic_linker.generate_links(notes, embeddings, filenames)
+        semantic_linker.generate_links(notes, embeddings, filenames, existing_links)
     
     # Save the updated notes
     semantic_linker.save_notes(notes, vault_path)
@@ -347,6 +401,12 @@ def run_custom_genai_linking(notes, tracking_data, num_notes=100, force_all=Fals
     # Extract summaries for all notes
     summaries = genai_linker.extract_titles_and_summaries(notes)
     
+    # Extract existing links from all notes
+    existing_links = {}
+    for path, note_data in notes.items():
+        content = note_data["content"] if isinstance(note_data, dict) else note_data
+        existing_links[path] = extract_existing_links(content)
+    
     # Select notes to process
     paths_to_process = select_genai_notes(notes, tracking_data, num_notes, force_all)
     
@@ -356,6 +416,9 @@ def run_custom_genai_linking(notes, tracking_data, num_notes=100, force_all=Fals
     
     for path in paths_to_process:
         try:
+            # Get existing links for this note
+            current_links = existing_links.get(path, [])
+            
             # Find relevant notes
             relevant_notes = genai_linker.find_relevant_notes(path, notes, summaries)
             
@@ -366,22 +429,75 @@ def run_custom_genai_linking(notes, tracking_data, num_notes=100, force_all=Fals
             
             # Create links section
             links = []
+            existing_link_entries = []
+            
+            # Check if the note already has a GenAI related notes section
+            if "## Related Notes (GenAI)" in content:
+                # Extract existing related notes section
+                existing_section = re.search(r"## Related Notes \(GenAI\)\n(.*?)(?=\n## |\n#|\Z)", 
+                                            content, flags=re.DOTALL)
+                if existing_section:
+                    # Save the existing links to preserve them
+                    existing_link_entries = existing_section.group(1).split("\n")
+                    
+                    # Extract note names from links to check for duplicates
+                    existing_note_names = []
+                    for entry in existing_link_entries:
+                        link_match = re.search(r'\[\[(.*?)\]\]', entry)
+                        if link_match:
+                            existing_note_names.append(link_match.group(1))
+            
+            # Add new links, avoiding duplicates with existing notes
             for rel_note in relevant_notes:
                 related_path = rel_note["path"]
                 related_filename = notes[related_path]["filename"]
                 note_name = os.path.splitext(related_filename)[0]
                 
+                # Skip if already linked (either in existing GenAI section or anywhere in the note)
+                if note_name in current_links:
+                    continue
+                
                 # Format the link with relevance score and reason
                 links.append(f"- [[{note_name}]] (Score: {rel_note['score']}/10)\n  - {rel_note['reason']}")
+                
+                # Add to current links to avoid duplicates in future iterations
+                current_links.append(note_name)
             
-            link_section = "\n\n## Related Notes (GenAI)\n" + "\n".join(links)
+            # If we have no new links to add, skip
+            if not links and not existing_link_entries:
+                continue
+                
+            # Combine existing and new links
+            all_link_entries = []
             
-            # Check if the note already has a GenAI related notes section
+            # First add existing links
+            note_names_added = []
+            for entry in existing_link_entries:
+                link_match = re.search(r'\[\[(.*?)\]\]', entry)
+                if link_match:
+                    note_name = link_match.group(1)
+                    if note_name not in note_names_added:
+                        all_link_entries.append(entry)
+                        note_names_added.append(note_name)
+            
+            # Then add new links
+            for link in links:
+                link_match = re.search(r'\[\[(.*?)\]\]', link)
+                if link_match:
+                    note_name = link_match.group(1)
+                    if note_name not in note_names_added:
+                        all_link_entries.append(link)
+                        note_names_added.append(note_name)
+            
+            # Create the updated section
+            link_section = "\n\n## Related Notes (GenAI)\n" + "\n".join(all_link_entries)
+            
+            # Update the note content
             if "## Related Notes (GenAI)" in content:
                 # Replace existing section
                 content = re.sub(
                     r"## Related Notes \(GenAI\).*?(?=\n## |\n#|\Z)", 
-                    f"## Related Notes (GenAI)\n{chr(10).join(links)}\n\n", 
+                    f"## Related Notes (GenAI)\n{chr(10).join(all_link_entries)}\n\n", 
                     content, 
                     flags=re.DOTALL
                 )

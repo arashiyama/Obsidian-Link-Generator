@@ -27,10 +27,13 @@ print(f"Using vault path: {VAULT_PATH}")
 TAG_PROMPT = """
 You are an AI assistant tasked with assigning 3-5 concise, relevant hashtags to the following note. Provide tags in lowercase without spaces (e.g., #projectmanagement, #python).
 
-Note:
-{}
+The note already has these existing tags: {existing_tags}
+Please suggest additional relevant tags that DON'T duplicate the existing ones.
 
-Tags:
+Note:
+{note_content}
+
+New Tags (don't include existing ones):
 """
 
 def load_notes(vault_path):
@@ -58,22 +61,60 @@ def load_notes(vault_path):
     print(f"Loaded {count} notes, skipped {skipped} due to errors")
     return notes
 
-def generate_tags_for_note(note):
+def extract_existing_tags(content):
+    """Extract all existing tags from a note (both from #tags section and inline)."""
+    existing_tags = []
+    
+    # Extract tags from #tags section if it exists
+    tags_section_match = re.search(r'#tags:\s*(.*?)(\n\n|\n$|$)', content, re.IGNORECASE | re.DOTALL)
+    if tags_section_match:
+        tags_text = tags_section_match.group(1).strip()
+        # Extract tags from the tags section
+        tags_from_section = [tag.strip() for tag in re.findall(r'#\w+', tags_text)]
+        existing_tags.extend(tags_from_section)
+    
+    # Find other inline tags in the document
+    inline_tags = [f"#{tag}" for tag in re.findall(r'#([a-zA-Z0-9_]+)', content)]
+    
+    # Combine all tags and remove duplicates while preserving order
+    all_tags = []
+    for tag in existing_tags + inline_tags:
+        if tag not in all_tags:
+            all_tags.append(tag)
+    
+    return all_tags
+
+def generate_tags_for_note(note_content, existing_tags):
+    """Generate new tags for a note, taking into account existing tags."""
+    existing_tags_str = ", ".join(existing_tags) if existing_tags else "none"
+    
     try:
         response = client.chat.completions.create(
             model="gpt-4-turbo-preview",
             messages=[
-                {"role": "user", "content": TAG_PROMPT.format(note[:2000])}
+                {"role": "user", "content": TAG_PROMPT.format(
+                    existing_tags=existing_tags_str,
+                    note_content=note_content[:2000]
+                )}
             ],
             temperature=0.2,
         )
-        tags = response.choices[0].message.content.strip()
-        # Ensure tags have the # prefix
-        tags = ' '.join([tag if tag.startswith('#') else f'#{tag}' for tag in tags.split()])
-        return tags
+        new_tags = response.choices[0].message.content.strip()
+        
+        # Ensure new tags have the # prefix
+        formatted_new_tags = []
+        for tag in new_tags.split():
+            if not tag.startswith('#'):
+                tag = f'#{tag}'
+            # Only add if it's not already in existing tags
+            tag_lower = tag.lower()  # Compare case-insensitively
+            if not any(existing.lower() == tag_lower for existing in existing_tags):
+                formatted_new_tags.append(tag)
+        
+        return formatted_new_tags
     except Exception as e:
         print(f"Error generating tags: {str(e)}")
-        return "#error"
+        return ["#error"]
 
 def insert_tags(notes):
     updated = 0
@@ -84,17 +125,37 @@ def insert_tags(notes):
         file_name = os.path.basename(path)
         
         try:
+            # Extract existing tags
+            existing_tags = extract_existing_tags(content)
+            print(f"Found {len(existing_tags)} existing tags in {file_name}")
+            
+            # Generate new tags
+            new_tags = generate_tags_for_note(content, existing_tags)
+            if not new_tags:
+                print(f"No new tags generated for {file_name}, keeping existing tags")
+                continue
+                
+            print(f"Generated {len(new_tags)} new tags for {file_name}")
+            
+            # Combine all tags (existing and new)
+            all_tags = existing_tags.copy()
+            for tag in new_tags:
+                if tag.lower() not in [t.lower() for t in all_tags]:
+                    all_tags.append(tag)
+            
+            # Format all tags for the #tags section
+            tags_text = " ".join(all_tags)
+            
             if "#tags:" not in content.lower():
-                print(f"Adding new tags to {file_name}")
-                tags = generate_tags_for_note(content)
-                tag_section = f"\n\n#tags: {tags}\n"
+                print(f"Adding new tags section to {file_name}")
+                tag_section = f"\n\n#tags: {tags_text}\n"
                 notes[path] = content + tag_section
                 updated += 1
             else:
-                print(f"Updating existing tags in {file_name}")
-                tags = generate_tags_for_note(content)
-                notes[path] = re.sub(r"#tags:.*", f"#tags: {tags}", content, flags=re.DOTALL)
+                print(f"Updating existing tags section in {file_name}")
+                notes[path] = re.sub(r"#tags:.*?(\n\n|\n$|$)", f"#tags: {tags_text}\n", content, flags=re.DOTALL)
                 updated += 1
+                
         except Exception as e:
             print(f"Error processing {file_name}: {str(e)}")
             traceback.print_exc()
