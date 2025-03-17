@@ -216,11 +216,95 @@ def update_taxonomy(taxonomy, updates):
     
     return taxonomy
 
+def categorize_notes(notes):
+    """Categorize multiple notes and update them with categories."""
+    print(f"Categorizing {len(notes)} out of {len(notes)} total notes...")
+    
+    # Load or create the taxonomy
+    taxonomy_path = "category_taxonomy.json"
+    taxonomy = load_or_create_category_taxonomy(taxonomy_path)
+    
+    updated_count = 0
+    skipped_count = 0
+    
+    for path, note_data in notes.items():
+        try:
+            content = note_data["content"] if isinstance(note_data, dict) else note_data
+            title = os.path.splitext(os.path.basename(path))[0]
+            
+            # Get category suggestions
+            result = categorize_note(content, title, taxonomy)
+            
+            if not result["categories"]:
+                skipped_count += 1
+                continue
+            
+            # Update the note with categories
+            if update_note_with_categories(path, content, result["categories"]):
+                updated_count += 1
+                
+                # Update the note content in the dictionary
+                if isinstance(note_data, dict):
+                    # Re-read the file to get updated content
+                    with open(path, "r", encoding="utf-8") as f:
+                        note_data["content"] = f.read()
+                else:
+                    # Re-read the file to get updated content
+                    with open(path, "r", encoding="utf-8") as f:
+                        notes[path] = f.read()
+                
+                # Update the taxonomy
+                if result["taxonomy_updates"]:
+                    taxonomy = update_taxonomy(taxonomy, result["taxonomy_updates"])
+            else:
+                skipped_count += 1
+                
+        except Exception as e:
+            print(f"Error processing {path}: {str(e)}")
+            skipped_count += 1
+    
+    # Save the updated taxonomy
+    save_category_taxonomy(taxonomy, taxonomy_path)
+    
+    print(f"Categorization completed: {updated_count} notes updated, {skipped_count} skipped")
+    return updated_count
+
 def cleanup_before_exit():
     """Clean up resources before exiting."""
     print("Performing cleanup before exit...")
     print("Note categorization tool interrupted. Some files may have been modified.")
     print("Cleanup completed. Goodbye!")
+
+def print_obsidian_setup_instructions():
+    """Print instructions for setting up Obsidian to use categories for graph visualization."""
+    print("\n===== Obsidian Setup Instructions for Categories =====")
+    print("To visualize categories in your Obsidian graph view:")
+    print("1. Open Obsidian Settings > Appearance > CSS Snippets")
+    print("2. Create a new CSS snippet file (e.g., 'category-colors.css')")
+    print("3. Add CSS rules for each category to color nodes in the graph")
+    print("4. Enable the CSS snippet in Obsidian")
+    print("\nExample CSS snippet:")
+    print("""
+    /* Category Colors for Graph View */
+    .graph-view.color-fill-tag[data-tag="categories/Programming"] {
+        color: #e74c3c;
+        background-color: rgba(231, 76, 60, 0.2);
+    }
+    
+    .graph-view.color-fill-tag[data-tag="categories/Philosophy"] {
+        color: #3498db;
+        background-color: rgba(52, 152, 219, 0.2);
+    }
+    
+    .graph-view.color-fill-tag[data-tag="categories/History"] {
+        color: #2ecc71;
+        background-color: rgba(46, 204, 113, 0.2);
+    }
+    """)
+    print("\n5. In Obsidian Graph View, configure display settings to:")
+    print("   - Show tags")
+    print("   - Filter for 'categories/' tags")
+    print("\nThis will color-code notes in your graph based on their categories.")
 
 def main():
     """Main function to categorize notes."""
@@ -300,4 +384,4 @@ def main():
     return updated
 
 if __name__ == "__main__":
-    main() 
+    main()
