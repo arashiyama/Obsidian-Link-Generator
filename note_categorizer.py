@@ -65,6 +65,34 @@ def load_notes(vault_path=None):
     print(f"Loaded {len(notes)} notes from vault")
     return notes
 
+def save_notes(notes, vault_path=None):
+    """Save all modified notes back to disk.
+    
+    This function is needed by obsidian_enhance.py to save notes after processing.
+    """
+    saved_count = 0
+    error_count = 0
+    
+    try:
+        for path, note_data in notes.items():
+            try:
+                # Get the content to save
+                content = note_data["content"] if isinstance(note_data, dict) else note_data
+                
+                # Save the note
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                saved_count += 1
+            except Exception as e:
+                print(f"Error saving note {path}: {str(e)}")
+                error_count += 1
+                
+        print(f"Saved {saved_count} notes, encountered {error_count} errors")
+        return saved_count
+    except Exception as e:
+        print(f"Error in save_notes: {str(e)}")
+        return 0
+
 def load_or_create_category_taxonomy(taxonomy_path):
     """Load existing category taxonomy or create a new one."""
     if os.path.exists(taxonomy_path):

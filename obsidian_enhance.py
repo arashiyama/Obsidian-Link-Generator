@@ -553,8 +553,17 @@ def run_note_categorization(vault_path, force_all=False, batch_size=50):
             
             vprint(f"Running categorization for batch with {len(batch_notes)} notes")
             categorized = note_categorizer.categorize_notes(batch_notes)
-            saved = note_categorizer.save_notes(batch_notes, vault_path)
+            
+            # Save notes after categorization - the function saves directly to files
+            # but we also need to update the note contents in memory
+            for path, batch_note in batch_notes.items():
+                content = batch_note["content"] if isinstance(batch_note, dict) else batch_note
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            
+            saved = len(batch_notes)
             saved_total += saved
+            vprint(f"Saved {saved} categorized notes in this batch")
             
             # Update tracking data for this batch
             for path in batch_notes.keys():
@@ -564,7 +573,9 @@ def run_note_categorization(vault_path, force_all=False, batch_size=50):
                 # Update note hash in tracking data
                 if "note_hashes" not in tracking_data:
                     tracking_data["note_hashes"] = {}
-                tracking_data["note_hashes"][path] = utils.generate_note_hash(batch_notes[path])
+                # Extract content from the note dictionary if needed
+                content = batch_notes[path]["content"] if isinstance(batch_notes[path], dict) else batch_notes[path]
+                tracking_data["note_hashes"][path] = utils.generate_note_hash(content)
             
             # Save tracking data after each batch
             save_tracking_data(tracking_data, CATEGORIZER_TRACKING_FILE)
@@ -574,9 +585,15 @@ def run_note_categorization(vault_path, force_all=False, batch_size=50):
         vprint("Starting note categorization using OpenAI API")
         categorized = note_categorizer.categorize_notes(notes)
         vprint(f"Categorization completed, saving notes to disk")
-        saved = note_categorizer.save_notes(notes, vault_path)
-        saved_total = saved
-        vprint(f"Saved {saved} categorized notes to disk")
+        
+        # Save notes directly to disk
+        for path, note in tqdm(notes.items(), desc="Saving categorized notes", unit="note"):
+            content = note["content"] if isinstance(note, dict) else note
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+        
+        saved_total = len(notes)
+        vprint(f"Saved {saved_total} categorized notes to disk")
         
         # Update tracking data
         new_processed = 0
@@ -588,7 +605,8 @@ def run_note_categorization(vault_path, force_all=False, batch_size=50):
             # Update note hash in tracking data
             if "note_hashes" not in tracking_data:
                 tracking_data["note_hashes"] = {}
-            tracking_data["note_hashes"][path] = utils.generate_note_hash(notes[path])
+            content = notes[path]["content"] if isinstance(notes[path], dict) else notes[path]
+            tracking_data["note_hashes"][path] = utils.generate_note_hash(content)
         
         vprint(f"Added {new_processed} new entries to processed notes tracking")
         save_tracking_data(tracking_data, CATEGORIZER_TRACKING_FILE)

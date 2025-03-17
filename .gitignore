@@ -11,6 +11,7 @@ ENV/
 # Files used by the script
 .cache_categories/
 .tracking/
+category_taxonomy.json
 # Cache files
 __pycache__/
 *.py[cod]
@@ -42,4 +43,4 @@ logs/
 # Database files
 *.db
 *.sqlite
-*.sqlite3 
+*.sqlite3

@@ -97,6 +97,8 @@ Options:
 - `--taxonomy-path`: Path to store category taxonomy (default: category_taxonomy.json)
 - `--sample-size`: Number of random notes to process (default: 5)
 
+The category taxonomy is stored in `category_taxonomy.json`, which is automatically generated during the categorization process. This file is specific to your vault and is excluded from version control (added to `.gitignore`). A sample file `category_taxonomy.example.json` is provided to show the expected structure.
+
 ## Utility Modules
 
 ### utils.py
