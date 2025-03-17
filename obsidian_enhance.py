@@ -29,6 +29,7 @@ import re
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from datetime import datetime
+import shutil
 
 # Import functionality from individual scripts
 import auto_tag_notes
@@ -59,6 +60,8 @@ def parse_arguments():
     parser.add_argument("--genai-link", action="store_true", help="Run GenAI linking")
     parser.add_argument("--categorize", action="store_true", help="Run note categorization for graph coloring")
     parser.add_argument("--all", action="store_true", help="Run all enhancement tools")
+    parser.add_argument("--clean", action="store_true", help="Remove all auto-generated links from notes")
+    parser.add_argument("--clean-tracking", action="store_true", help="Also clear tracking data when cleaning")
     parser.add_argument("--genai-notes", type=int, default=100, 
                        help="Number of notes to process with GenAI linker (default: 100)")
     parser.add_argument("--force-all", action="store_true", 
@@ -471,6 +474,76 @@ def run_note_categorization(vault_path, force_all=False):
     print(f"Note categorization: Processed {saved} notes")
     return saved
 
+def clean_notes(vault_path, clear_tracking=False):
+    """
+    Remove all auto-generated links from notes.
+    Optionally clear tracking data.
+    """
+    print(f"Cleaning notes in vault: {vault_path}")
+    
+    # Load all notes
+    notes = {}
+    count = 0
+    skipped = 0
+    cleaned = 0
+    
+    print("Loading notes...")
+    for root, dirs, files in os.walk(vault_path):
+        # Skip hidden directories
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        
+        for file in files:
+            if file.endswith(".md"):
+                path = os.path.join(root, file)
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        notes[path] = content
+                        count += 1
+                except Exception as e:
+                    print(f"Error reading file {path}: {str(e)}")
+                    skipped += 1
+    
+    print(f"Loaded {count} notes, skipped {skipped} due to errors")
+    
+    # Define patterns for each type of auto-generated links section
+    patterns = [
+        r"\n\n## Related Notes\n.*?(?=\n## |\n#|\Z)",  # Semantic links
+        r"\n\n## Related Notes \(by Tag\)\n.*?(?=\n## |\n#|\Z)",  # Tag links
+        r"\n\n## Related Notes \(GenAI\)\n.*?(?=\n## |\n#|\Z)"  # GenAI links
+    ]
+    
+    # Remove auto-generated links from each note
+    for path, content in notes.items():
+        original_content = content
+        
+        # Apply each pattern to remove auto-generated links
+        for pattern in patterns:
+            content = re.sub(pattern, "", content, flags=re.DOTALL)
+        
+        # Only save if content has changed
+        if content != original_content:
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                    cleaned += 1
+            except Exception as e:
+                print(f"Error writing to file {path}: {str(e)}")
+    
+    print(f"Cleaned {cleaned} notes")
+    
+    # Clear tracking data if requested
+    if clear_tracking:
+        if os.path.exists(TRACKING_DIR):
+            try:
+                shutil.rmtree(TRACKING_DIR)
+                os.makedirs(TRACKING_DIR)  # Recreate empty directory
+                print("Tracking data cleared")
+            except Exception as e:
+                print(f"Error clearing tracking data: {str(e)}")
+    
+    return cleaned
+
 def main():
     start_time = time.time()
     print(f"Starting Obsidian vault enhancement at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -483,10 +556,26 @@ def main():
         print("No vault path provided. Set OBSIDIAN_VAULT_PATH environment variable or use --vault-path")
         sys.exit(1)
     
-    # If no specific tool is selected, do nothing unless --all is set
-    if not (args.auto_tag or args.tag_link or args.semantic_link or args.genai_link or args.categorize) and not args.all:
+    # If no specific tool is selected and not cleaning, do nothing unless --all is set
+    if not (args.auto_tag or args.tag_link or args.semantic_link or args.genai_link or 
+            args.categorize or args.clean) and not args.all:
         print("No tools selected to run. Use --help to see available options.")
         sys.exit(1)
+    
+    # Run clean if requested
+    if args.clean:
+        print("\n===== Cleaning Auto-Generated Links =====")
+        cleaned = clean_notes(vault_path, args.clean_tracking)
+        print(f"Removed auto-generated links from {cleaned} notes")
+        if args.clean_tracking:
+            print("Tracking data cleared")
+        
+        # If only cleaning was requested, exit
+        if not (args.auto_tag or args.tag_link or args.semantic_link or args.genai_link or 
+                args.categorize or args.all):
+            elapsed_time = time.time() - start_time
+            print(f"\nCleaning completed in {elapsed_time:.2f} seconds")
+            return
     
     # Run categorization
     if args.all or args.categorize:

@@ -169,6 +169,7 @@ This unified script combines the functionality of all the individual tools into 
 - Prioritizes processing unprocessed notes when using the GenAI linker
 - Provides progress statistics for GenAI linking coverage
 - Customizable number of notes to process with GenAI linker per run
+- **Clean Function**: Easily remove all auto-generated links and optionally reset tracking data
 
 #### Example Usage
 
@@ -187,6 +188,12 @@ python obsidian_enhance.py --categorize
 
 # Force processing all notes even if previously processed
 python obsidian_enhance.py --all --force-all
+
+# Clean all auto-generated links from notes
+python obsidian_enhance.py --clean
+
+# Clean all auto-generated links and reset tracking data
+python obsidian_enhance.py --clean --clean-tracking
 
 # Specify a different vault path
 python obsidian_enhance.py --all --vault-path /path/to/vault
@@ -253,6 +260,27 @@ For best results, consider using these tools in sequence:
 5. Run `genai_linker.py` selectively on important notes to add insightful explanations
 
 Alternatively, use the unified `obsidian_enhance.py` script to run all or selected tools in the optimal sequence.
+
+### Cleaning and Starting Fresh
+
+If you want to remove all auto-generated links and start fresh:
+
+1. Use the `--clean` flag to remove all auto-generated links:
+   ```bash
+   python obsidian_enhance.py --clean
+   ```
+
+2. To also reset the tracking data and start completely fresh:
+   ```bash
+   python obsidian_enhance.py --clean --clean-tracking
+   ```
+   
+3. You can combine cleaning with immediately reprocessing:
+   ```bash
+   python obsidian_enhance.py --clean --all
+   ```
+
+This is useful when you want to remove all automated content and regenerate everything with updated settings or after making significant changes to your vault.
 
 ## Contributing and Bug Reports
 
