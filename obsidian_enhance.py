@@ -25,6 +25,9 @@ import json
 import time
 import random
 import hashlib
+import re
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 from datetime import datetime
 
 # Import functionality from individual scripts
@@ -373,7 +376,6 @@ def run_custom_genai_linking(notes, tracking_data, num_notes=100, force_all=Fals
             # Check if the note already has a GenAI related notes section
             if "## Related Notes (GenAI)" in content:
                 # Replace existing section
-                import re
                 content = re.sub(
                     r"## Related Notes \(GenAI\).*?(?=\n## |\n#|\Z)", 
                     f"## Related Notes (GenAI)\n{chr(10).join(links)}\n\n", 
@@ -485,12 +487,6 @@ def main():
     if not (args.auto_tag or args.tag_link or args.semantic_link or args.genai_link or args.categorize) and not args.all:
         print("No tools selected to run. Use --help to see available options.")
         sys.exit(1)
-    
-    # Import any modules needed for specific functions
-    if args.all or args.semantic_link:
-        import numpy as np
-        from sklearn.metrics.pairwise import cosine_similarity
-        import re
     
     # Run categorization
     if args.all or args.categorize:
