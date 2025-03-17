@@ -11,9 +11,9 @@ This document outlines the planned development roadmap for the Auto Link Obsidia
 ## Near-Term Goals (Next 3 Months)
 
 ### Enhanced Metadata Integration
-- [ ] Extract and parse YAML frontmatter metadata 
-- [ ] Consider metadata fields in similarity calculations
-- [ ] Add options for metadata-based filtering of link suggestions
+- ✅ Extract and parse YAML frontmatter metadata 
+- ✅ Consider metadata fields in similarity calculations
+- ✅ Display shared metadata in link suggestions
 
 ### AI Note Summaries
 - [ ] Create automatic summarization of note content

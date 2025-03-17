@@ -22,6 +22,7 @@ import re
 import time
 import json
 import hashlib
+import yaml
 from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -50,8 +51,43 @@ EMBEDDINGS_CACHE_FILE = os.path.join(CACHE_DIR, "embeddings_cache.json")
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
 
+# Metadata settings
+METADATA_WEIGHT = 0.3  # Weight to give metadata in similarity calculation (0-1)
+IMPORTANT_METADATA_FIELDS = ["tags", "category", "categories", "type", "topic", "topics", "project", "area"]
+
+def extract_frontmatter(content):
+    """
+    Extract YAML frontmatter from note content.
+    
+    Args:
+        content: String content of the note
+        
+    Returns:
+        tuple: (frontmatter_dict, content_without_frontmatter)
+    """
+    # Check if content starts with YAML frontmatter (---)
+    if content.startswith("---"):
+        # Find the end of the frontmatter
+        end_pos = content.find("---", 3)
+        if end_pos != -1:
+            frontmatter_text = content[3:end_pos].strip()
+            content_without_frontmatter = content[end_pos+3:].strip()
+            
+            try:
+                # Parse the YAML frontmatter
+                frontmatter = yaml.safe_load(frontmatter_text)
+                if not isinstance(frontmatter, dict):
+                    frontmatter = {}
+                
+                return frontmatter, content_without_frontmatter
+            except Exception as e:
+                print(f"Error parsing frontmatter: {str(e)}")
+    
+    # No frontmatter or error parsing
+    return {}, content
+
 def load_notes(vault_path=None):
-    """Load all notes from the vault."""
+    """Load all notes from the vault, extracting frontmatter metadata."""
     if not vault_path:
         vault_path = os.getenv("OBSIDIAN_VAULT_PATH")
         if not vault_path:
@@ -73,11 +109,24 @@ def load_notes(vault_path=None):
                     with open(path, "r", encoding="utf-8") as f:
                         content = f.read()
                     
-                    notes[path] = content
+                    # Extract frontmatter metadata
+                    frontmatter, content_without_frontmatter = extract_frontmatter(content)
+                    
+                    # Store content and metadata
+                    notes[path] = {
+                        "content": content,
+                        "content_for_embedding": content_without_frontmatter,
+                        "metadata": frontmatter
+                    }
                 except Exception as e:
                     print(f"Error reading {file}: {str(e)}")
     
     print(f"Loaded {len(notes)} notes from vault")
+    
+    # Print metadata statistics
+    notes_with_metadata = sum(1 for note in notes.values() if note["metadata"])
+    print(f"Found {notes_with_metadata} notes with frontmatter metadata ({notes_with_metadata/len(notes)*100:.1f}%)")
+    
     return notes
 
 @retry(
@@ -137,7 +186,36 @@ def save_embeddings_cache(cache):
     except Exception as e:
         print(f"Error saving embedding cache: {str(e)}")
 
-def get_embeddings(contents):
+def prepare_metadata_for_embedding(metadata):
+    """
+    Prepare metadata for embedding by extracting relevant fields and formatting them as text.
+    
+    Args:
+        metadata: Dict containing frontmatter metadata
+        
+    Returns:
+        str: Formatted metadata text
+    """
+    if not metadata:
+        return ""
+    
+    metadata_parts = []
+    
+    # Extract important metadata fields
+    for field in IMPORTANT_METADATA_FIELDS:
+        if field in metadata:
+            value = metadata[field]
+            
+            # Handle different types of values
+            if isinstance(value, list):
+                # Join list values with commas
+                metadata_parts.append(f"{field}: {', '.join(str(v) for v in value)}")
+            elif isinstance(value, (str, int, float, bool)):
+                metadata_parts.append(f"{field}: {value}")
+    
+    return "\n".join(metadata_parts)
+
+def get_embeddings(notes):
     """Generate embeddings for all notes using OpenAI API with caching."""
     try:
         # Load the cache
@@ -148,11 +226,30 @@ def get_embeddings(contents):
         new_indices = []
         content_hashes = []
         all_embeddings = []
+        note_keys = list(notes.keys())
         
         # Check which notes are already in cache
         print("Checking embedding cache for notes...")
-        for i, content in enumerate(contents):
-            content_hash = get_content_hash(content)
+        for i, path in enumerate(note_keys):
+            note_data = notes[path]
+            
+            # Prepare content for embedding with metadata enhancement
+            content_for_embedding = note_data["content_for_embedding"]
+            metadata_text = prepare_metadata_for_embedding(note_data["metadata"])
+            
+            # If we have metadata, add it to the content with appropriate weighting
+            if metadata_text:
+                # Repeat metadata text to give it appropriate weight in the embedding
+                weighted_metadata = "\n\n" + metadata_text * 3  # Repeat to increase weight
+                content_with_metadata = content_for_embedding + weighted_metadata
+            else:
+                content_with_metadata = content_for_embedding
+                
+            # Store the prepared content for embedding
+            note_data["content_with_metadata"] = content_with_metadata
+            
+            # Generate a hash for caching
+            content_hash = get_content_hash(content_with_metadata)
             content_hashes.append(content_hash)
             
             if content_hash in embeddings_cache:
@@ -160,11 +257,11 @@ def get_embeddings(contents):
                 all_embeddings.append(embeddings_cache[content_hash])
             else:
                 # Mark for processing
-                new_contents.append(content)
+                new_contents.append(content_with_metadata)
                 new_indices.append(i)
         
-        cache_hits = len(contents) - len(new_contents)
-        print(f"Cache hits: {cache_hits}/{len(contents)} notes ({cache_hits/len(contents)*100:.1f}%)")
+        cache_hits = len(note_keys) - len(new_contents)
+        print(f"Cache hits: {cache_hits}/{len(note_keys)} notes ({cache_hits/len(note_keys)*100:.1f}%)")
         
         if new_contents:
             print(f"Generating embeddings for {len(new_contents)} new notes in batches of {EMBEDDING_BATCH_SIZE}")
@@ -196,9 +293,26 @@ def get_embeddings(contents):
             save_embeddings_cache(embeddings_cache)
         
         # Convert to numpy array for easier manipulation
-        embeddings_array = np.array(all_embeddings)
-        
-        return embeddings_array
+        try:
+            # Make sure all embeddings have the same length for numpy conversion
+            embeddings_array = np.array(all_embeddings, dtype=np.float32)
+            return embeddings_array
+        except ValueError as e:
+            print(f"Error converting embeddings to numpy array: {str(e)}")
+            print("This may be due to inconsistent embedding dimensions")
+            # Try alternate approach by padding or truncating if needed
+            max_len = max(len(emb) for emb in all_embeddings)
+            normalized_embeddings = []
+            for emb in all_embeddings:
+                if len(emb) < max_len:
+                    # Pad with zeros if shorter
+                    padded = emb + [0.0] * (max_len - len(emb))
+                    normalized_embeddings.append(padded)
+                else:
+                    # Use as is or truncate if needed
+                    normalized_embeddings.append(emb[:max_len])
+            
+            return np.array(normalized_embeddings, dtype=np.float32)
     except Exception as e:
         print(f"Error generating embeddings: {str(e)}")
         return None
@@ -213,24 +327,24 @@ def cosine_similarity_matrix(embeddings):
     
     return similarity_matrix
 
-def generate_links(notes, embeddings, filenames, existing_links=None, subset_notes=None):
+def generate_links(notes, embeddings, existing_links=None, subset_notes=None):
     """
     Generate links based on semantic similarity from OpenAI embeddings.
     
     Args:
-        notes: Dict mapping file paths to note contents
+        notes: Dict mapping file paths to note data (content, metadata, etc.)
         embeddings: Numpy array of embeddings for all notes
-        filenames: List of file paths corresponding to rows in embeddings
         existing_links: Dict mapping file paths to lists of already-linked note names
         subset_notes: Dict of notes to update (if None, update all notes)
     """
     updated = 0
+    filenames = list(notes.keys())
     
     # If no existing links provided, create an empty dictionary
     if existing_links is None:
         existing_links = {}
         for path in notes:
-            existing_links[path] = utils.extract_existing_links(notes[path])
+            existing_links[path] = utils.extract_existing_links(notes[path]["content"])
     
     print("Calculating similarity matrix...")
     similarity_matrix = cosine_similarity_matrix(embeddings)
@@ -257,7 +371,7 @@ def generate_links(notes, embeddings, filenames, existing_links=None, subset_not
             link_entries = []
             
             # Extract existing section if it exists
-            section_text, _ = utils.extract_section(notes[file], "## Related Notes")
+            section_text, _ = utils.extract_section(notes[file]["content"], "## Related Notes")
             existing_link_entries = []
             if section_text:
                 existing_link_entries = section_text.split("\n")
@@ -283,7 +397,32 @@ def generate_links(notes, embeddings, filenames, existing_links=None, subset_not
                 
                 # Format the link with similarity score
                 similarity = similarities[i]
-                link_entry = f"- [[{note_name}]] (Semantic Similarity: {similarity:.2f})"
+                
+                # Add metadata information if available
+                metadata_info = ""
+                rel_metadata = notes[rel_path]["metadata"]
+                shared_fields = []
+                
+                if rel_metadata and notes[file]["metadata"]:
+                    # Check for shared metadata fields
+                    for field in IMPORTANT_METADATA_FIELDS:
+                        if field in rel_metadata and field in notes[file]["metadata"]:
+                            rel_value = rel_metadata[field]
+                            curr_value = notes[file]["metadata"][field]
+                            
+                            # Check for shared values
+                            if isinstance(rel_value, list) and isinstance(curr_value, list):
+                                # Find intersection of lists
+                                shared = set([str(x).lower() for x in rel_value]) & set([str(x).lower() for x in curr_value])
+                                if shared:
+                                    shared_fields.append(f"{field}: {', '.join(shared)}")
+                            elif str(rel_value).lower() == str(curr_value).lower():
+                                shared_fields.append(f"{field}: {rel_value}")
+                
+                if shared_fields:
+                    metadata_info = f" | Shared: {'; '.join(shared_fields)}"
+                
+                link_entry = f"- [[{note_name}]] (Semantic Similarity: {similarity:.2f}{metadata_info})"
                 link_entries.append(link_entry)
             
             # If we have no entries to add and no existing entries, skip
@@ -295,13 +434,13 @@ def generate_links(notes, embeddings, filenames, existing_links=None, subset_not
             
             # Update the section in the content
             updated_content = utils.replace_section(
-                notes[file], 
+                notes[file]["content"], 
                 "## Related Notes", 
                 "\n".join(all_link_entries)
             )
             
             # Save the updated content
-            notes[file] = updated_content
+            notes[file]["content"] = updated_content
             updated += 1
             
         except Exception as e:
@@ -310,15 +449,15 @@ def generate_links(notes, embeddings, filenames, existing_links=None, subset_not
     print(f"Added semantic links to {updated} notes")
     return updated
 
-def save_notes(notes, vault_path=None):
+def save_notes(notes):
     """Save updated notes to disk."""
     saved = 0
     errors = 0
     
-    for path, content in notes.items():
+    for path, note_data in notes.items():
         try:
             with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
+                f.write(note_data["content"])
             saved += 1
         except Exception as e:
             print(f"Error saving {path}: {str(e)}")
@@ -351,18 +490,17 @@ def main():
     notes = load_notes(vault_path)
     
     print("Generating embeddings for notes")
-    filenames, contents = list(notes.keys()), list(notes.values())
-    embeddings = get_embeddings(contents)
+    embeddings = get_embeddings(notes)
     
     if embeddings is None:
         print("Failed to generate embeddings")
         sys.exit(1)
     
     print("Generating semantic links")
-    generate_links(notes, embeddings, filenames)
+    generate_links(notes, embeddings)
     
     print("Saving notes")
-    saved = save_notes(notes, vault_path)
+    saved = save_notes(notes)
     
     print(f"Added semantic links to {saved} notes")
     return saved

@@ -139,6 +139,16 @@ To improve performance and reduce API costs, the system now implements a smart c
 - Significantly reduces processing time for subsequent runs
 - Minimizes OpenAI API usage by reusing existing embeddings
 
+### Frontmatter Metadata Integration
+
+The system now leverages YAML frontmatter metadata in notes to enhance semantic linking:
+
+- Automatically extracts and parses YAML frontmatter from notes
+- Incorporates metadata fields like tags, categories, and topics into similarity calculations
+- Identifies and displays shared metadata fields between linked notes
+- Creates more contextually relevant connections between related notes
+- Handles various metadata formats including lists, strings, and numeric values
+
 ### Session Memory
 
 The scripts use a tracking directory with JSON files to track which notes have been processed by each tool. This enables:

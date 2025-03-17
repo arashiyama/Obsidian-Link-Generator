@@ -12,6 +12,12 @@ All notable changes to the Auto Link Obsidian project will be documented in this
 - Sorting and limiting of semantic links to show only the top 10, providing more focused recommendations
 - Smart embedding cache system to avoid reprocessing unchanged notes
 - Cache hit statistics to track efficiency improvements
+- YAML frontmatter metadata integration for more context-aware links
+- Shared metadata detection and display in semantic link explanations
+- Robust error handling for inconsistent embedding dimensions
+
+### Fixed
+- Fixed "setting an array element with a sequence" error when processing embeddings of different dimensions
 
 ### Changed
 - Replaced TF-IDF vectorization with OpenAI's text-embedding-3-small model
