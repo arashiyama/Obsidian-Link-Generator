@@ -357,16 +357,16 @@ def run_semantic_linking(vault_path, force_all=False):
         print(f"Semantic linking: Updating {len(notes_to_update)} out of {len(notes)} total notes...")
         
         # Process only a subset of notes but with awareness of all notes' similarities
-        subset_links = {}
+        subset_notes = {}
         for idx, file in enumerate(filenames):
             if file in notes_to_update:
-                subset_links[file] = True
+                subset_notes[file] = True
                 
-        semantic_linker.generate_links(notes, embeddings, filenames, existing_links, subset_links)
+        semantic_linker.generate_links(notes, embeddings, existing_links, subset_notes)
     else:
         # Process all notes, but still avoid duplicating links
         print(f"Semantic linking: Processing all {len(notes)} notes...")
-        semantic_linker.generate_links(notes, embeddings, filenames, existing_links)
+        semantic_linker.generate_links(notes, embeddings, existing_links)
     
     # Save the updated notes
     semantic_linker.save_notes(notes, vault_path)

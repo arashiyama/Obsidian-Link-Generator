@@ -19,12 +19,21 @@ def extract_existing_links(content):
     Extract all existing wiki links from a note.
     
     Args:
-        content (str): The note content to extract links from
+        content (str or dict): The note content to extract links from.
+                             Can be a string or a dictionary with a 'content' key.
         
     Returns:
         list: List of link targets (without brackets)
     """
     links = []
+    
+    # Handle both string content and dictionary with 'content' key
+    if isinstance(content, dict) and 'content' in content:
+        content = content['content']
+    
+    # Ensure content is a string
+    if not isinstance(content, str):
+        return links
     
     # Find all wiki links in the content
     for match in re.finditer(r'\[\[(.*?)(?:\|.*?)?\]\]', content):
@@ -38,12 +47,21 @@ def extract_existing_tags(content):
     Extract all existing tags from a note (both from #tags section and inline).
     
     Args:
-        content (str): The note content to extract tags from
+        content (str or dict): The note content to extract tags from.
+                             Can be a string or a dictionary with a 'content' key.
         
     Returns:
         list: List of tags (with # prefix)
     """
     existing_tags = []
+    
+    # Handle both string content and dictionary with 'content' key
+    if isinstance(content, dict) and 'content' in content:
+        content = content['content']
+    
+    # Ensure content is a string
+    if not isinstance(content, str):
+        return existing_tags
     
     # Extract tags from #tags section if it exists
     tags_section_match = re.search(r'#tags:\s*(.*?)(\n\n|\n$|$)', content, re.IGNORECASE | re.DOTALL)
@@ -70,12 +88,21 @@ def extract_section(content, section_header):
     Extract a section from note content.
     
     Args:
-        content (str): The note content
+        content (str or dict): The note content.
+                             Can be a string or a dictionary with a 'content' key.
         section_header (str): The section header to extract (e.g., "## Related Notes")
         
     Returns:
         tuple: (section_text, full_match) or (None, None) if section not found
     """
+    # Handle both string content and dictionary with 'content' key
+    if isinstance(content, dict) and 'content' in content:
+        content = content['content']
+    
+    # Ensure content is a string
+    if not isinstance(content, str):
+        return None, None
+    
     # Escape any regex special characters in the section header
     escaped_header = re.escape(section_header)
     
@@ -92,13 +119,22 @@ def replace_section(content, section_header, new_section_content):
     Replace a section in note content or add it if it doesn't exist.
     
     Args:
-        content (str): The note content
+        content (str or dict): The note content.
+                             Can be a string or a dictionary with a 'content' key.
         section_header (str): The section header (e.g., "## Related Notes")
         new_section_content (str): The new content for the section
         
     Returns:
         str: Updated content
     """
+    # Handle both string content and dictionary with 'content' key
+    if isinstance(content, dict) and 'content' in content:
+        content = content['content']
+    
+    # Ensure content is a string
+    if not isinstance(content, str):
+        return content
+    
     # Check if section exists
     escaped_header = re.escape(section_header)
     if re.search(f"{escaped_header}\\n", content):
@@ -204,11 +240,20 @@ def generate_note_hash(note_content):
     Generate a hash for note content to track changes.
     
     Args:
-        note_content (str): The note content to hash
+        note_content (str or dict): The note content to hash.
+                                  Can be a string or a dictionary with a 'content' key.
         
     Returns:
         str: MD5 hash of the content
     """
+    # Handle both string content and dictionary with 'content' key
+    if isinstance(note_content, dict) and 'content' in note_content:
+        note_content = note_content['content']
+    
+    # Ensure content is a string
+    if not isinstance(note_content, str):
+        note_content = str(note_content)
+    
     return hashlib.md5(note_content.encode('utf-8')).hexdigest()
 
 def get_note_filename(path):
@@ -221,4 +266,4 @@ def get_note_filename(path):
     Returns:
         str: The note name without extension
     """
-    return os.path.splitext(os.path.basename(path))[0] 
+    return os.path.splitext(os.path.basename(path))[0]

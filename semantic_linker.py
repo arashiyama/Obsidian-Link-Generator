@@ -449,7 +449,7 @@ def generate_links(notes, embeddings, existing_links=None, subset_notes=None):
     print(f"Added semantic links to {updated} notes")
     return updated
 
-def save_notes(notes):
+def save_notes(notes, vault_path=None):
     """Save updated notes to disk."""
     saved = 0
     errors = 0
@@ -457,7 +457,8 @@ def save_notes(notes):
     for path, note_data in notes.items():
         try:
             with open(path, "w", encoding="utf-8") as f:
-                f.write(note_data["content"])
+                content = note_data["content"] if isinstance(note_data, dict) else note_data
+                f.write(content)
             saved += 1
         except Exception as e:
             print(f"Error saving {path}: {str(e)}")
@@ -500,7 +501,7 @@ def main():
     generate_links(notes, embeddings)
     
     print("Saving notes")
-    saved = save_notes(notes)
+    saved = save_notes(notes, vault_path)
     
     print(f"Added semantic links to {saved} notes")
     return saved

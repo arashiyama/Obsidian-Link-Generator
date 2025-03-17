@@ -246,7 +246,7 @@ def update_taxonomy(taxonomy, updates):
 
 def categorize_notes(notes):
     """Categorize multiple notes and update them with categories."""
-    print(f"Categorizing {len(notes)} out of {len(notes)} total notes...")
+    print(f"Categorizing {len(notes)} notes...")
     
     # Load or create the taxonomy - with timeout handling
     taxonomy_path = "category_taxonomy.json"
