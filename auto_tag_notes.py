@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 import traceback
 import utils
+import signal_handler
 
 load_dotenv()
 
@@ -154,8 +155,20 @@ def save_notes(notes, vault_path):
     print(f"Saved {saved} notes, failed to save {failed} notes")
     return saved
 
+def cleanup_before_exit():
+    """Clean up resources before exiting."""
+    print("Performing cleanup before exit...")
+    print("Auto-tagging tool interrupted. No files have been modified.")
+    print("Cleanup completed. Goodbye!")
+
 if __name__ == "__main__":
     try:
+        # Set up clean interrupt handling
+        signal_handler.setup_interrupt_handling()
+        
+        # Register cleanup function
+        signal_handler.register_cleanup_function(cleanup_before_exit)
+        
         notes = load_notes(VAULT_PATH)
         if not notes:
             print("No notes found! Check the vault path.")

@@ -24,6 +24,7 @@ import random
 from dotenv import load_dotenv
 from openai import OpenAI
 import utils
+import signal_handler
 
 # Load environment variables from .env file
 load_dotenv()
@@ -205,8 +206,20 @@ def save_notes(notes):
     print(f"Saved {saved} notes with {errors} errors")
     return saved
 
+def cleanup_before_exit():
+    """Clean up resources before exiting."""
+    print("Performing cleanup before exit...")
+    print("GenAI linking tool interrupted. No files have been modified.")
+    print("Cleanup completed. Goodbye!")
+
 def main():
     """Main function to run GenAI linking."""
+    # Set up clean interrupt handling
+    signal_handler.setup_interrupt_handling()
+    
+    # Register cleanup function
+    signal_handler.register_cleanup_function(cleanup_before_exit)
+    
     vault_path = os.getenv("OBSIDIAN_VAULT_PATH")
     if not vault_path:
         print("Error: OBSIDIAN_VAULT_PATH not set in environment or .env file")

@@ -14,6 +14,7 @@ Features:
 - Run all tools in optimal sequence or select specific ones to run
 - Tracks which notes have been processed by each tool for session persistence
 - Provides unified configuration through command-line arguments
+- Gracefully handles CTRL+C interrupts for safe termination
 
 Author: Jonathan Care <jonc@lacunae.org>
 """
@@ -30,6 +31,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from datetime import datetime
 import shutil
 import utils
+import signal_handler
 
 # Import functionality from individual scripts
 import auto_tag_notes
@@ -656,7 +658,21 @@ def deduplicate_links_and_tags(vault_path):
     print(f"Deduplicated links and tags in {deduplicated} notes")
     return deduplicated
 
+def cleanup_before_exit():
+    """Clean up resources before exiting."""
+    print("Performing cleanup before exit...")
+    # Add any necessary cleanup here, like closing file handles
+    # or ensuring tracking data is saved, etc.
+    
+    print("Cleanup completed. Goodbye!")
+
 def main():
+    # Set up clean interrupt handling
+    signal_handler.setup_interrupt_handling()
+    
+    # Register cleanup function to run on exit (whether normal or interrupted)
+    signal_handler.register_cleanup_function(cleanup_before_exit)
+    
     start_time = time.time()
     print(f"Starting Obsidian vault enhancement at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
