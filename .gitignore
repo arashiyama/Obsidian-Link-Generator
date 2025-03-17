@@ -8,6 +8,9 @@ ENV/
 # Environment variables
 .env
 
+# Files used by the script
+.cache_categories/
+.tracking/
 # Cache files
 __pycache__/
 *.py[cod]

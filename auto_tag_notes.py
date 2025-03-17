@@ -15,6 +15,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from tqdm import tqdm
 import traceback
+import utils
 
 load_dotenv()
 
@@ -61,29 +62,6 @@ def load_notes(vault_path):
     print(f"Loaded {count} notes, skipped {skipped} due to errors")
     return notes
 
-def extract_existing_tags(content):
-    """Extract all existing tags from a note (both from #tags section and inline)."""
-    existing_tags = []
-    
-    # Extract tags from #tags section if it exists
-    tags_section_match = re.search(r'#tags:\s*(.*?)(\n\n|\n$|$)', content, re.IGNORECASE | re.DOTALL)
-    if tags_section_match:
-        tags_text = tags_section_match.group(1).strip()
-        # Extract tags from the tags section
-        tags_from_section = [tag.strip() for tag in re.findall(r'#\w+', tags_text)]
-        existing_tags.extend(tags_from_section)
-    
-    # Find other inline tags in the document
-    inline_tags = [f"#{tag}" for tag in re.findall(r'#([a-zA-Z0-9_]+)', content)]
-    
-    # Combine all tags and remove duplicates while preserving order
-    all_tags = []
-    for tag in existing_tags + inline_tags:
-        if tag not in all_tags:
-            all_tags.append(tag)
-    
-    return all_tags
-
 def generate_tags_for_note(note_content, existing_tags):
     """Generate new tags for a note, taking into account existing tags."""
     existing_tags_str = ", ".join(existing_tags) if existing_tags else "none"
@@ -101,17 +79,16 @@ def generate_tags_for_note(note_content, existing_tags):
         )
         new_tags = response.choices[0].message.content.strip()
         
-        # Ensure new tags have the # prefix
-        formatted_new_tags = []
+        # Ensure new tags have the # prefix and are unique
+        formatted_tags = []
         for tag in new_tags.split():
             if not tag.startswith('#'):
                 tag = f'#{tag}'
-            # Only add if it's not already in existing tags
-            tag_lower = tag.lower()  # Compare case-insensitively
-            if not any(existing.lower() == tag_lower for existing in existing_tags):
-                formatted_new_tags.append(tag)
+            formatted_tags.append(tag)
         
-        return formatted_new_tags
+        # Deduplicate against existing tags
+        return [tag for tag in formatted_tags 
+                if not any(existing.lower() == tag.lower() for existing in existing_tags)]
     except Exception as e:
         print(f"Error generating tags: {str(e)}")
         return ["#error"]
@@ -125,8 +102,8 @@ def insert_tags(notes):
         file_name = os.path.basename(path)
         
         try:
-            # Extract existing tags
-            existing_tags = extract_existing_tags(content)
+            # Extract existing tags using the utility function
+            existing_tags = utils.extract_existing_tags(content)
             print(f"Found {len(existing_tags)} existing tags in {file_name}")
             
             # Generate new tags
@@ -137,11 +114,8 @@ def insert_tags(notes):
                 
             print(f"Generated {len(new_tags)} new tags for {file_name}")
             
-            # Combine all tags (existing and new)
-            all_tags = existing_tags.copy()
-            for tag in new_tags:
-                if tag.lower() not in [t.lower() for t in all_tags]:
-                    all_tags.append(tag)
+            # Combine all tags and deduplicate
+            all_tags = utils.deduplicate_tags(existing_tags + new_tags)
             
             # Format all tags for the #tags section
             tags_text = " ".join(all_tags)

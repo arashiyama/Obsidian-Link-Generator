@@ -1,398 +1,294 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-genai_linker.py - Creates insightful links between Obsidian notes using Generative AI
+genai_linker.py - Create links between notes using GenAI for relevance analysis
 
-This script analyzes notes in an Obsidian vault and uses the OpenAI GPT-4 API to identify 
-relevant relationships between notes with detailed explanations. It creates "Related Notes (GenAI)" 
-sections that include relevance scores and explanations of the relationships.
-Features include content truncation, caching, and selective processing.
+This script reads markdown notes from an Obsidian vault and:
+1. Extracts titles and summaries from notes
+2. Uses OpenAI GPT to find relationships between notes with explanations
+3. Adds a "Related Notes (GenAI)" section with links and explanations
+
+Features:
+- Intelligent relevance scoring
+- Natural language explanations for relationships
+- Avoids duplicating existing links
 
 Author: Jonathan Care <jonc@lacunae.org>
 """
 
 import os
+import sys
 import re
+import json
 import random
-from collections import defaultdict
-from tqdm import tqdm
 from dotenv import load_dotenv
 from openai import OpenAI
-import time
-import tiktoken
-import hashlib
-import json
+import utils
 
+# Load environment variables from .env file
 load_dotenv()
 
-# Initialize the OpenAI client
+# Initialize the OpenAI client with the API key
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH", "/Users/jonc/Obsidian/Jonathans Brain")
-MODEL = "gpt-4-turbo-preview"  # Use a powerful model for better reasoning
-MAX_TOKENS = 1000  # Maximum tokens to use for note content in the prompt
-MAX_RELATED_NOTES = 5  # Maximum number of related notes to identify per note
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache_genai")
-
-# Create cache directory if it doesn't exist
-if not os.path.exists(CACHE_DIR):
-    os.makedirs(CACHE_DIR)
-
-# Initialize the tokenizer for counting tokens
-tokenizer = tiktoken.get_encoding("cl100k_base")
-
-def count_tokens(text):
-    """Count the number of tokens in a text string."""
-    return len(tokenizer.encode(text))
-
-def truncate_text(text, max_tokens):
-    """Truncate text to fit within max_tokens."""
-    tokens = tokenizer.encode(text)
-    if len(tokens) <= max_tokens:
-        return text
+def load_notes(vault_path=None):
+    """Load all notes from the vault."""
+    if not vault_path:
+        vault_path = os.getenv("OBSIDIAN_VAULT_PATH")
+        if not vault_path:
+            print("Error: No vault path provided. Set OBSIDIAN_VAULT_PATH in .env")
+            sys.exit(1)
     
-    # Keep the beginning and end of the text, which often contain key information
-    half_length = max_tokens // 2
-    beginning = tokenizer.decode(tokens[:half_length])
-    end = tokenizer.decode(tokens[-half_length:])
-    
-    return beginning + "\n\n[...content truncated...]\n\n" + end
-
-def load_notes(vault_path):
-    """Load all markdown notes from the vault."""
+    # Dictionary to store notes
     notes = {}
-    count = 0
-    skipped = 0
     
-    print(f"Loading notes from {vault_path}")
+    # Walk through all directories and files in the vault
     for root, dirs, files in os.walk(vault_path):
-        # Skip venv directory
-        dirs[:] = [d for d in dirs if d != "venv"]
+        # Skip hidden directories
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
         
         for file in files:
             if file.endswith(".md"):
-                path = os.path.join(root, file)
-                rel_path = os.path.relpath(path, vault_path)
                 try:
+                    path = os.path.join(root, file)
                     with open(path, "r", encoding="utf-8") as f:
                         content = f.read()
-                        # Store both full path, filename, and content
-                        note_name = os.path.splitext(file)[0]
-                        notes[path] = {
-                            "content": content,
-                            "filename": file,
-                            "name": note_name,
-                            "rel_path": rel_path
-                        }
-                        count += 1
+                    
+                    notes[path] = {
+                        "filename": file,
+                        "content": content
+                    }
                 except Exception as e:
-                    print(f"Error reading file {path}: {str(e)}")
-                    skipped += 1
+                    print(f"Error reading {file}: {str(e)}")
     
-    print(f"Loaded {count} notes, skipped {skipped} due to errors")
+    print(f"Loaded {len(notes)} notes from vault")
     return notes
 
 def extract_titles_and_summaries(notes):
-    """Extract titles and first paragraph as summaries for each note."""
+    """Extract titles and create summaries for each note."""
     summaries = {}
     
-    print("Extracting summaries...")
-    for path, note_data in tqdm(notes.items()):
-        content = note_data["content"]
+    for path, note in notes.items():
+        content = note["content"]
+        filename = note["filename"]
         
-        # Use filename as title
-        title = note_data["name"]
+        # Extract title - first use H1 if available, else use filename
+        title = os.path.splitext(filename)[0]
+        h1_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
+        if h1_match:
+            title = h1_match.group(1).strip()
         
-        # Get first paragraph as summary
-        lines = content.split("\n")
-        non_empty_lines = [line for line in lines if line.strip()]
-        summary = ""
-        if non_empty_lines:
-            # Skip header lines that start with # and get first paragraph
-            for line in non_empty_lines:
-                if not line.startswith("#") and len(line) > 10:  # Skip short lines
-                    summary = line
-                    break
+        # Create a summary from the first 500 characters, stopping at the nearest paragraph break
+        summary = content[:500]
+        last_para_break = summary.rfind("\n\n")
+        if last_para_break > 100:  # Ensure we have at least 100 chars
+            summary = summary[:last_para_break]
         
-        # If no good summary found, use first 100 characters
-        if not summary and content:
-            summary = content[:100].replace("\n", " ")
-        
+        # Store the title and summary
         summaries[path] = {
             "title": title,
-            "summary": summary[:200] + ("..." if len(summary) > 200 else "")
+            "summary": summary.strip()
         }
     
     return summaries
 
-def generate_cache_key(source_note, chunk_index, total_chunks):
-    """Generate a unique cache key based on source note path and chunk info."""
-    key_str = f"{source_note}_chunk{chunk_index}_of_{total_chunks}"
-    return hashlib.md5(key_str.encode('utf-8')).hexdigest()
-
-def get_from_cache(cache_key):
-    """Retrieve data from cache if it exists."""
-    cache_file = os.path.join(CACHE_DIR, f"{cache_key}.json")
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error reading cache file: {str(e)}")
-    return None
-
-def save_to_cache(cache_key, data):
-    """Save data to cache."""
-    cache_file = os.path.join(CACHE_DIR, f"{cache_key}.json")
+def find_relevant_notes(target_path, notes, summaries, max_notes=5):
+    """Find relevant notes for a target note using OpenAI API."""
+    target_note = notes[target_path]
+    target_content = target_note["content"]
+    target_summary = summaries[target_path]
+    
+    # Get random sample of other notes (excluding the target)
+    other_paths = [path for path in notes.keys() if path != target_path]
+    
+    # Limit to 20 random notes to keep API calls manageable
+    if len(other_paths) > 20:
+        other_paths = random.sample(other_paths, 20)
+    
+    # Create the list of other note summaries
+    candidates = []
+    for path in other_paths:
+        candidates.append({
+            "path": path,
+            "title": summaries[path]["title"],
+            "summary": summaries[path]["summary"]
+        })
+    
+    # Skip if we have no candidates
+    if not candidates:
+        return []
+    
     try:
-        with open(cache_file, 'w') as f:
-            json.dump(data, f)
+        # Prepare the prompt for the API
+        prompt = {
+            "target_note": {
+                "title": target_summary["title"],
+                "content": target_content[:2000]  # Limit content to first 2000 chars
+            },
+            "candidate_notes": candidates
+        }
+        
+        # Call the OpenAI API
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": """You are an assistant that finds relationships between notes in a knowledge base.
+                    Analyze the target note and the candidate notes, and identify which candidates are most
+                    relevant to the target. Provide a score from 1-10 (10 being highly related) and a brief
+                    explanation. Return a JSON array with the path and score for each relevant note."""
+                },
+                {
+                    "role": "user",
+                    "content": f"""Find the most relevant notes to this target note:
+
+Target: {json.dumps(prompt["target_note"])}
+
+Candidates: {json.dumps(prompt["candidate_notes"])}
+
+For each candidate, evaluate how related it is to the target note. 
+Choose at most {max_notes} notes that are most relevant.
+Return a JSON array with "related_notes" containing:
+- path (string)
+- score (integer 1-10)
+- reason (string, 1-2 sentences explaining the relationship)
+
+Example:
+{{
+  "related_notes": [
+    {{
+      "path": "/path/to/note.md",
+      "score": 8,
+      "reason": "Both notes discuss similar concepts and reference related theories."
+    }}
+  ]
+}}"""
+                }
+            ]
+        )
+        
+        # Parse the response
+        result = json.loads(response.choices[0].message.content)
+        
+        # Extract the related notes
+        related_notes = result.get("related_notes", [])
+        
+        # Only include notes with a score of at least 5
+        filtered_notes = [
+            {"path": note["path"], "score": note["score"], "reason": note["reason"]}
+            for note in related_notes
+            if note["score"] >= 5
+        ]
+        
+        return filtered_notes
+        
     except Exception as e:
-        print(f"Error writing to cache file: {str(e)}")
+        print(f"Error finding relevant notes: {str(e)}")
+        return []
 
-def find_relevant_notes(source_path, notes, summaries, max_notes=MAX_RELATED_NOTES):
-    """Find relevant notes for a given source note using GenAI."""
-    source_data = notes[source_path]
-    source_content = source_data["content"]
-    source_title = source_data["name"]
+def save_notes(notes):
+    """Save updated notes to disk."""
+    saved = 0
+    errors = 0
     
-    # Truncate source content to fit within token limits
-    truncated_content = truncate_text(source_content, MAX_TOKENS)
-    
-    # We need to chunk the candidate notes since there might be too many
-    # to fit in a single prompt
-    candidate_paths = list(notes.keys())
-    candidate_paths.remove(source_path)  # Remove source note from candidates
-    
-    # Shuffle candidates to get a different set for each chunk
-    random.shuffle(candidate_paths)
-    
-    # Number of notes to process in each chunk
-    chunk_size = 20
-    total_chunks = (len(candidate_paths) + chunk_size - 1) // chunk_size
-    
-    # Process in smaller batches to avoid context length issues
-    all_relevant_notes = []
-    
-    # Process small randomly selected chunks of notes
-    for i in range(min(total_chunks, 5)):  # Limit to 5 chunks maximum
-        chunk_start = i * chunk_size
-        chunk_end = min((i + 1) * chunk_size, len(candidate_paths))
-        chunk = candidate_paths[chunk_start:chunk_end]
-        
-        # Generate cache key for this chunk
-        cache_key = generate_cache_key(source_path, i, total_chunks)
-        cached_result = get_from_cache(cache_key)
-        
-        if cached_result:
-            all_relevant_notes.extend(cached_result)
-            continue
-        
-        # Build information for each candidate note
-        candidates_info = []
-        for path in chunk:
-            candidates_info.append({
-                "id": path,
-                "title": summaries[path]["title"],
-                "summary": summaries[path]["summary"]
-            })
-        
-        # Skip if no candidates in this chunk
-        if not candidates_info:
-            continue
-        
-        # Create prompt for the LLM
-        prompt = f"""You are an expert knowledge graph builder for a personal Obsidian knowledge base.
-
-I'll provide you with a source note and a list of other notes. Your task is to identify which notes are most relevant to the source note and explain why.
-
-SOURCE NOTE TITLE: {source_title}
-SOURCE NOTE CONTENT:
-{truncated_content}
-
-CANDIDATE NOTES:
-"""
-        
-        for idx, candidate in enumerate(candidates_info, 1):
-            prompt += f"{idx}. TITLE: {candidate['title']}\n   SUMMARY: {candidate['summary']}\n\n"
-        
-        prompt += f"""
-Identify up to {max_notes} notes that are most relevant to the source note. For each relevant note:
-1. Explain specifically why it's relevant and how it connects to the source note
-2. Rate the relevance on a scale of 1-10 where 10 is highest
-
-Format your response as follows:
-RELEVANT NOTE #X: [Note Title]
-RELEVANCE SCORE: [1-10]
-REASON: [Your detailed explanation of why this note is relevant]
-
-Do not include notes that have little to no relevance to the source note. Focus on meaningful connections.
-"""
-        
+    for path, note in notes.items():
         try:
-            # Make API call
-            response = client.chat.completions.create(
-                model=MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-            )
-            
-            result = response.choices[0].message.content.strip()
-            
-            # Parse the results
-            chunk_relevant_notes = []
-            relevant_sections = re.split(r'RELEVANT NOTE #\d+:', result)[1:]
-            
-            for section in relevant_sections:
-                # Extract title, score, and reason
-                title_match = re.search(r'^\s*([^\n]+)', section)
-                score_match = re.search(r'RELEVANCE SCORE:\s*(\d+)', section)
-                reason_match = re.search(r'REASON:\s*(.+?)(?=\n\n|$)', section, re.DOTALL)
-                
-                if title_match and score_match and reason_match:
-                    title = title_match.group(1).strip()
-                    score = int(score_match.group(1))
-                    reason = reason_match.group(1).strip()
-                    
-                    # Find the note ID based on title
-                    note_id = None
-                    for candidate in candidates_info:
-                        if candidate["title"].lower() == title.lower() or title.lower() in candidate["title"].lower():
-                            note_id = candidate["id"]
-                            break
-                    
-                    if note_id:
-                        chunk_relevant_notes.append({
-                            "path": note_id,
-                            "title": title,
-                            "score": score,
-                            "reason": reason
-                        })
-            
-            # Cache the results
-            save_to_cache(cache_key, chunk_relevant_notes)
-            
-            # Add to overall results
-            all_relevant_notes.extend(chunk_relevant_notes)
-            
-            # Sleep to avoid rate limiting
-            time.sleep(0.5)
-            
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(note["content"])
+            saved += 1
         except Exception as e:
-            print(f"Error finding relevant notes for {source_title}: {str(e)}")
+            print(f"Error saving {path}: {str(e)}")
+            errors += 1
     
-    # Sort by relevance score and limit to max_notes
-    sorted_notes = sorted(all_relevant_notes, key=lambda x: x["score"], reverse=True)
-    return sorted_notes[:max_notes]
+    print(f"Saved {saved} notes with {errors} errors")
+    return saved
 
-def update_notes_with_relations(notes, find_related_func):
-    """Update notes with related notes sections based on GenAI relevance."""
+def main():
+    """Main function to run GenAI linking."""
+    vault_path = os.getenv("OBSIDIAN_VAULT_PATH")
+    if not vault_path:
+        print("Error: OBSIDIAN_VAULT_PATH not set in environment or .env file")
+        sys.exit(1)
+    
+    print(f"Loading notes from vault: {vault_path}")
+    notes = load_notes(vault_path)
+    
+    print("Extracting titles and summaries")
+    summaries = extract_titles_and_summaries(notes)
+    
+    # Choose a random subset of notes to process
+    num_notes = min(10, len(notes))  # Process at most 10 notes for demonstration
+    note_paths = random.sample(list(notes.keys()), num_notes)
+    
+    print(f"Processing {num_notes} random notes with GenAI linking")
     updated = 0
     skipped = 0
     
-    # First extract summaries for all notes
-    summaries = extract_titles_and_summaries(notes)
-    
-    # Select a subset of notes to process if there are too many
-    all_paths = list(notes.keys())
-    if len(all_paths) > 100:
-        # Process only a random sample to keep runtime reasonable
-        print(f"Selecting 100 random notes out of {len(all_paths)} total notes to process")
-        random.shuffle(all_paths)
-        paths_to_process = all_paths[:100]
-    else:
-        paths_to_process = all_paths
-    
-    print(f"Finding related notes for {len(paths_to_process)} notes...")
-    for path in tqdm(paths_to_process):
+    for path in note_paths:
         try:
+            # Extract existing links to avoid duplicate linking
+            content = notes[path]["content"]
+            current_links = utils.extract_existing_links(content)
+            
             # Find relevant notes
-            relevant_notes = find_related_func(path, notes, summaries)
+            relevant_notes = find_relevant_notes(path, notes, summaries)
             
             if not relevant_notes:
                 continue
             
-            content = notes[path]["content"]
+            # Extract existing GenAI related notes section if it exists
+            section_text, _ = utils.extract_section(content, "## Related Notes (GenAI)")
+            existing_link_entries = []
+            if section_text:
+                existing_link_entries = section_text.split("\n")
             
-            # Create links section
-            links = []
+            # Create new link entries for relevant notes
+            new_link_entries = []
             for rel_note in relevant_notes:
                 related_path = rel_note["path"]
                 related_filename = notes[related_path]["filename"]
                 note_name = os.path.splitext(related_filename)[0]
                 
+                # Skip if already linked in the document
+                if note_name in current_links:
+                    continue
+                
                 # Format the link with relevance score and reason
-                links.append(f"- [[{note_name}]] (Score: {rel_note['score']}/10)\n  - {rel_note['reason']}")
+                link_entry = f"- [[{note_name}]] (Score: {rel_note['score']}/10)\n  - {rel_note['reason']}"
+                new_link_entries.append(link_entry)
+                
+                # Add to current links to avoid duplicates in future iterations
+                current_links.append(note_name)
             
-            link_section = "\n\n## Related Notes (GenAI)\n" + "\n".join(links)
+            # If we have no entries to add and no existing entries, skip
+            if not new_link_entries and not existing_link_entries:
+                continue
             
-            # Check if the note already has a GenAI related notes section
-            if "## Related Notes (GenAI)" in content:
-                # Replace existing section
-                content = re.sub(
-                    r"## Related Notes \(GenAI\).*?(?=\n## |\n#|\Z)", 
-                    f"## Related Notes (GenAI)\n{chr(10).join(links)}\n\n", 
-                    content, 
-                    flags=re.DOTALL
-                )
-            else:
-                # Add new section
-                content += link_section
+            # Merge existing and new link entries
+            all_link_entries = utils.merge_links(existing_link_entries, new_link_entries)
             
-            # Update the note content
-            notes[path]["content"] = content
+            # Update the section in the content
+            updated_content = utils.replace_section(
+                content, 
+                "## Related Notes (GenAI)", 
+                "\n".join(all_link_entries)
+            )
+            
+            # Save the updated content
+            notes[path]["content"] = updated_content
             updated += 1
             
         except Exception as e:
             print(f"Error updating {path}: {str(e)}")
-            traceback.print_exc()
             skipped += 1
     
-    print(f"Updated {updated} notes, skipped {skipped} due to errors")
-    return updated
-
-def save_notes(notes):
-    """Save the updated notes back to disk."""
-    saved = 0
-    failed = 0
+    print("Saving notes")
+    saved = save_notes(notes)
     
-    print("Saving updated notes...")
-    for path, note_data in tqdm(notes.items()):
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(note_data["content"])
-                saved += 1
-        except Exception as e:
-            print(f"Error writing to file {path}: {str(e)}")
-            failed += 1
-    
-    print(f"Saved {saved} notes, failed to save {failed} notes")
+    print(f"Added GenAI links to {updated} notes ({saved} saved)")
     return saved
 
 if __name__ == "__main__":
-    try:
-        import traceback
-        print(f"Using vault path: {VAULT_PATH}")
-        print(f"Using model: {MODEL}")
-        print(f"Maximum related notes per note: {MAX_RELATED_NOTES}")
-        
-        # Step 1: Load all notes
-        notes = load_notes(VAULT_PATH)
-        if not notes:
-            print("No notes found! Check the vault path.")
-            exit(1)
-        
-        # Step 2: Update notes with relations found by GenAI
-        updated = update_notes_with_relations(notes, find_relevant_notes)
-        
-        # Step 3: Save the updated notes
-        saved = save_notes(notes)
-        
-        if saved > 0:
-            print(f"✅ GenAI-based linking completed! Updated and saved {saved} notes.")
-        else:
-            print("❌ No notes were saved. Check logs for errors.")
-            
-    except Exception as e:
-        print(f"❌ Error during execution: {str(e)}")
-        traceback.print_exc() 
+    main() 

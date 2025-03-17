@@ -1,261 +1,224 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-tag_linker.py - Links Obsidian notes based on shared tags
+tag_linker.py - Create links between notes that share the same tags
 
-This script analyzes all notes in an Obsidian vault, extracts tags from each note,
-and creates "Related Notes (by Tag)" sections based on the number of shared tags.
-It helps organize notes by creating connections between content with similar tags.
+This script reads all markdown notes in an Obsidian vault and:
+1. Extracts tags from all notes
+2. Identifies notes that share the same tags
+3. For each note, adds a "Related Notes (by Tag)" section with links to related notes
+
+Features:
+- Configurable minimum tag match (default: at least 2 matching tags)
+- Preserves existing links and sections
 
 Author: Jonathan Care <jonc@lacunae.org>
 """
 
 import os
+import sys
 import re
 from collections import defaultdict
-from tqdm import tqdm
 from dotenv import load_dotenv
+import utils
 
+# Load environment variables from .env file
 load_dotenv()
 
-VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH", "/Users/jonc/Obsidian/Jonathans Brain")
-# Minimum number of shared tags required to create a link between notes
-MIN_SHARED_TAGS = 2
-# Maximum number of related notes to show per note
-MAX_RELATED_NOTES = 10
+# Minimum number of matching tags to create a link
+MIN_TAG_MATCH = 2
 
-def load_notes(vault_path):
-    """Load all markdown notes from the vault."""
-    notes = {}
-    count = 0
-    skipped = 0
+def load_notes(vault_path=None):
+    """Load all notes from the vault."""
+    if not vault_path:
+        vault_path = os.getenv("OBSIDIAN_VAULT_PATH")
+        if not vault_path:
+            print("Error: No vault path provided. Set OBSIDIAN_VAULT_PATH in .env")
+            sys.exit(1)
     
-    print(f"Loading notes from {vault_path}")
+    # Dictionary to store notes
+    notes = {}
+    
+    # Walk through all directories and files in the vault
     for root, dirs, files in os.walk(vault_path):
-        # Skip venv directory
-        dirs[:] = [d for d in dirs if d != "venv"]
+        # Skip hidden directories
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
         
         for file in files:
             if file.endswith(".md"):
-                path = os.path.join(root, file)
                 try:
+                    path = os.path.join(root, file)
                     with open(path, "r", encoding="utf-8") as f:
                         content = f.read()
-                        # Store both full path and filename
-                        notes[path] = {
-                            "content": content,
-                            "filename": file
-                        }
-                        count += 1
+                    
+                    notes[path] = {
+                        "filename": file,
+                        "content": content
+                    }
                 except Exception as e:
-                    print(f"Error reading file {path}: {str(e)}")
-                    skipped += 1
+                    print(f"Error reading {file}: {str(e)}")
     
-    print(f"Loaded {count} notes, skipped {skipped} due to errors")
+    print(f"Loaded {len(notes)} notes from vault")
     return notes
 
 def extract_tags(notes):
     """Extract tags from all notes."""
-    note_tags = {}
-    tag_to_notes = defaultdict(list)
+    note_tags = {}  # Dict to store tags for each note
+    tag_to_notes = defaultdict(list)  # Dict to store notes for each tag
     
-    print("Extracting tags from notes...")
-    for path, note_data in tqdm(notes.items()):
-        content = note_data["content"]
+    for path, note in notes.items():
+        # Get content from note
+        content = note["content"]
         
-        # Find all tags in the content
-        tags = []
-        # Look for #tags: section first
-        tags_section_match = re.search(r'#tags:\s*(.*?)(\n\n|\n$|$)', content, re.IGNORECASE | re.DOTALL)
-        if tags_section_match:
-            tags_text = tags_section_match.group(1).strip()
-            # Extract tags from the tags section
-            tags = [tag.strip() for tag in re.findall(r'#\w+', tags_text)]
+        # Extract tags from the content using utility function
+        tags = utils.extract_existing_tags(content)
+            
+        # Store tags for this note
+        note_tags[path] = tags
         
-        # Also find other inline tags in the document
-        inline_tags = re.findall(r'#([a-zA-Z0-9_]+)', content)
-        for tag in inline_tags:
-            if f"#{tag}" not in tags:  # Avoid duplicates
-                tags.append(f"#{tag}")
-        
-        if tags:
-            note_tags[path] = tags
-            # Build the reverse index: tag -> notes
-            for tag in tags:
-                tag_to_notes[tag].append(path)
+        # Store notes for each tag
+        for tag in tags:
+            # Remove the # prefix when storing in tag_to_notes
+            tag_clean = tag[1:] if tag.startswith("#") else tag
+            tag_to_notes[tag_clean].append(path)
     
-    print(f"Extracted tags from {len(note_tags)} notes, found {len(tag_to_notes)} unique tags")
     return note_tags, tag_to_notes
 
 def build_relations(notes, note_tags, tag_to_notes):
     """Build relations between notes based on shared tags."""
-    relations = defaultdict(list)
+    relations = {}
     
-    print("Building relations between notes...")
-    for path, tags in tqdm(note_tags.items()):
-        related_notes = defaultdict(int)
+    # For each note, find other notes with matching tags
+    for path, tags in note_tags.items():
+        # Skip notes with no tags
+        if not tags:
+            continue
         
-        # Find notes that share tags with this note
+        # Track related notes and the tags they share
+        related_notes = defaultdict(set)
+        
+        # For each tag, find other notes with the same tag
         for tag in tags:
-            for related_path in tag_to_notes[tag]:
-                if related_path != path:  # Don't relate a note to itself
-                    related_notes[related_path] += 1
+            tag_clean = tag[1:] if tag.startswith("#") else tag
+            for related_path in tag_to_notes[tag_clean]:
+                if related_path != path:  # Don't link to self
+                    related_notes[related_path].add(tag_clean)
         
-        # Filter notes that share at least MIN_SHARED_TAGS
-        filtered_relations = [(p, count) for p, count in related_notes.items() 
-                              if count >= MIN_SHARED_TAGS]
+        # Filter to notes with at least MIN_TAG_MATCH matching tags
+        strong_relations = {
+            rel_path: list(rel_tags)
+            for rel_path, rel_tags in related_notes.items()
+            if len(rel_tags) >= MIN_TAG_MATCH
+        }
         
-        # Sort by number of shared tags, descending
-        sorted_relations = sorted(filtered_relations, key=lambda x: x[1], reverse=True)
-        
-        # Limit to MAX_RELATED_NOTES
-        relations[path] = sorted_relations[:MAX_RELATED_NOTES]
+        # Store relations for this note
+        if strong_relations:
+            relations[path] = strong_relations
     
     return relations
 
 def update_notes_with_relations(notes, relations, existing_links=None):
-    """Update notes with related notes sections."""
+    """Update notes with links to related notes by tag."""
     updated = 0
-    skipped = 0
     
-    # If no existing links provided, create an empty dictionary
-    if existing_links is None:
-        existing_links = {}
-    
-    print("Updating notes with relations...")
-    for path, related_paths in tqdm(relations.items()):
-        if not related_paths:
-            continue
-        
+    for path, related in relations.items():
         try:
             content = notes[path]["content"]
-            current_links = existing_links.get(path, [])
             
-            # Track which links we've already added to avoid duplicates
-            added_links = set()
+            # Extract existing links to avoid duplicate linking
+            current_links = existing_links.get(path, []) if existing_links else utils.extract_existing_links(content)
             
-            # Extract existing links from the tag-based section if it exists
+            # Build the new section with links to related notes
+            link_entries = []
+            
+            # Extract existing section content if it exists
+            section_text, _ = utils.extract_section(content, "## Related Notes (by Tag)")
             existing_link_entries = []
-            existing_link_names = []
+            if section_text:
+                existing_link_entries = section_text.split("\n")
             
-            if "## Related Notes (by Tag)" in content:
-                # Extract existing related notes section
-                existing_section = re.search(r"## Related Notes \(by Tag\)\n(.*?)(?=\n## |\n#|\Z)", 
-                                           content, flags=re.DOTALL)
-                if existing_section:
-                    # Save the existing links to preserve their details
-                    existing_link_entries = existing_section.group(1).split("\n")
-                    
-                    # Extract note names from links
-                    for entry in existing_link_entries:
-                        link_match = re.search(r'\[\[(.*?)\]\]', entry)
-                        if link_match:
-                            note_name = link_match.group(1)
-                            existing_link_names.append(note_name)
-                            added_links.add(note_name)
-            
-            # Create new links section
-            all_links = []
-            
-            # First add existing links that we want to keep
-            for entry in existing_link_entries:
-                if entry.strip():  # Skip empty lines
-                    all_links.append(entry)
-            
-            # Then add new links, avoiding duplicates
-            for related_path, count in related_paths:
-                related_filename = notes[related_path]["filename"]
-                # Create the Obsidian link using just the filename without extension
-                note_name = os.path.splitext(related_filename)[0]
+            # Create entries for related notes
+            for rel_path, shared_tags in related.items():
+                # Get the note name from the related path
+                rel_file = os.path.basename(rel_path)
+                rel_note_name = os.path.splitext(rel_file)[0]
                 
-                # Skip if this note is already linked in the document or existing section
-                if note_name in current_links or note_name in added_links:
+                # Skip if already linked in the document
+                if rel_note_name in current_links:
                     continue
                 
-                all_links.append(f"- [[{note_name}]] ({count} shared tags)")
-                added_links.add(note_name)
-            
-            # Skip if we have no links to add
-            if not all_links:
-                continue
+                # Add to current links to avoid duplicates in future iterations
+                current_links.append(rel_note_name)
                 
-            link_section = "\n\n## Related Notes (by Tag)\n" + "\n".join(all_links)
+                # Format the link with shared tags
+                tags_text = ", ".join([f"#{tag}" for tag in sorted(shared_tags)])
+                link_entry = f"- [[{rel_note_name}]] - Shared tags: {tags_text}"
+                link_entries.append(link_entry)
             
-            # Check if the note already has a related notes section
-            if "## Related Notes (by Tag)" in content:
-                # Replace existing section
-                content = re.sub(
-                    r"## Related Notes \(by Tag\).*?(?=\n## |\n#|\Z)", 
-                    f"## Related Notes (by Tag)\n{chr(10).join(all_links)}\n\n", 
-                    content, 
-                    flags=re.DOTALL
-                )
-            else:
-                # Add new section
-                content += link_section
+            # If we have no entries to add and no existing entries, skip
+            if not link_entries and not existing_link_entries:
+                continue
             
-            # Update the note content
-            notes[path]["content"] = content
+            # Merge existing and new link entries
+            all_link_entries = utils.merge_links(existing_link_entries, link_entries)
+            
+            # Update the section in the content
+            updated_content = utils.replace_section(
+                content, 
+                "## Related Notes (by Tag)", 
+                "\n".join(all_link_entries)
+            )
+            
+            # Save the updated content
+            notes[path]["content"] = updated_content
             updated += 1
             
         except Exception as e:
-            print(f"Error updating {path}: {str(e)}")
-            skipped += 1
+            print(f"Error updating related notes for {path}: {str(e)}")
     
-    print(f"Updated {updated} notes, skipped {skipped} due to errors")
     return updated
 
-def save_notes(notes):
-    """Save the updated notes back to disk."""
+def save_notes(notes, vault_path=None):
+    """Save updated notes to disk."""
     saved = 0
-    failed = 0
+    errors = 0
     
-    print("Saving updated notes...")
-    for path, note_data in tqdm(notes.items()):
+    for path, note in notes.items():
         try:
             with open(path, "w", encoding="utf-8") as f:
-                f.write(note_data["content"])
-                saved += 1
+                f.write(note["content"])
+            saved += 1
         except Exception as e:
-            print(f"Error writing to file {path}: {str(e)}")
-            failed += 1
+            print(f"Error saving {path}: {str(e)}")
+            errors += 1
     
-    print(f"Saved {saved} notes, failed to save {failed} notes")
+    print(f"Saved {saved} notes with {errors} errors")
+    return saved
+
+def main():
+    """Main function to run tag-based linking."""
+    vault_path = os.getenv("OBSIDIAN_VAULT_PATH")
+    if not vault_path:
+        print("Error: OBSIDIAN_VAULT_PATH not set in environment or .env file")
+        sys.exit(1)
+    
+    print(f"Loading notes from vault: {vault_path}")
+    notes = load_notes(vault_path)
+    
+    print("Extracting tags from notes")
+    note_tags, tag_to_notes = extract_tags(notes)
+    
+    print("Building relations between notes")
+    relations = build_relations(notes, note_tags, tag_to_notes)
+    
+    print("Updating notes with related links")
+    updated = update_notes_with_relations(notes, relations)
+    
+    print("Saving notes")
+    saved = save_notes(notes)
+    
+    print(f"Added tag-based links to {updated} notes ({saved} saved)")
     return saved
 
 if __name__ == "__main__":
-    try:
-        print(f"Using vault path: {VAULT_PATH}")
-        print(f"Minimum shared tags: {MIN_SHARED_TAGS}")
-        print(f"Maximum related notes: {MAX_RELATED_NOTES}")
-        
-        # Step 1: Load all notes
-        notes = load_notes(VAULT_PATH)
-        if not notes:
-            print("No notes found! Check the vault path.")
-            exit(1)
-        
-        # Step 2: Extract tags from all notes
-        note_tags, tag_to_notes = extract_tags(notes)
-        if not note_tags:
-            print("No tags found in any notes!")
-            exit(1)
-        
-        # Step 3: Build relations based on shared tags
-        relations = build_relations(notes, note_tags, tag_to_notes)
-        
-        # Step 4: Update notes with related notes sections
-        updated = update_notes_with_relations(notes, relations)
-        
-        # Step 5: Save the updated notes
-        saved = save_notes(notes)
-        
-        if saved > 0:
-            print(f"✅ Tag-based linking completed! Updated and saved {saved} notes.")
-        else:
-            print("❌ No notes were saved. Check file permissions.")
-            
-    except Exception as e:
-        import traceback
-        print(f"❌ Error during execution: {str(e)}")
-        traceback.print_exc() 
+    main() 
