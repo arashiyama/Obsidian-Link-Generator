@@ -15,6 +15,11 @@ All notable changes to the Auto Link Obsidian project will be documented in this
 - YAML frontmatter metadata integration for more context-aware links
 - Shared metadata detection and display in semantic link explanations
 - Robust error handling for inconsistent embedding dimensions
+- Comprehensive testing framework with unit tests:
+  - Tests for utility functions and core components
+  - Mock-based tests for embedding generation to avoid API calls
+  - Test runner script for easy test execution
+  - Detailed test documentation
 
 ### Fixed
 - Fixed "setting an array element with a sequence" error when processing embeddings of different dimensions
