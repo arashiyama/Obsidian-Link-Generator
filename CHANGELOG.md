@@ -4,6 +4,31 @@ All notable changes to the Auto Link Obsidian project will be documented in this
 
 ## [Unreleased]
 
+### Added
+- OpenAI embedding integration in semantic_linker.py for significantly improved semantic understanding
+- Batch processing with retry logic for OpenAI API calls to handle rate limits and connection issues
+- Improved cosine similarity calculation for more accurate link suggestions
+- Enhanced presentation of semantic links with higher threshold for more relevant connections
+- Sorting and limiting of semantic links to show only the top 10, providing more focused recommendations
+- Smart embedding cache system to avoid reprocessing unchanged notes
+- Cache hit statistics to track efficiency improvements
+
+### Changed
+- Replaced TF-IDF vectorization with OpenAI's text-embedding-3-small model
+- Adjusted similarity threshold from 0.3 to 0.75 to account for higher quality embeddings
+- Updated link formatting to indicate "Semantic Similarity" for clarity
+- Improved embedding processing workflow to only generate embeddings for new or changed content
+
+### Planned Features
+- **Advanced Metadata Integration**: Extract and utilize YAML frontmatter metadata for more intelligent linking
+- **AI Note Summaries**: Automatically generate concise summaries for notes to improve discovery
+- **Relationship Visualization**: Export relationship data for visualization in tools like Graphviz
+- **Custom Link Templates**: Configurable templates for different types of links
+- **Advanced Tag Clustering**: Group related tags hierarchically using AI
+- **Bulk Operations**: Process multiple specific notes in batch mode
+- **Performance Optimizations**: Improved speed for large vaults (1000+ notes)
+- **Search Integration**: Search your notes with natural language queries
+
 ## [0.3.0] - 2025-03-05
 
 ### Added
@@ -71,4 +96,4 @@ All notable changes to the Auto Link Obsidian project will be documented in this
 - Note categorizer for organizing notes in the graph view
 - Unified script (obsidian_enhance.py) to run all enhancement features
 - Basic session memory to track processed notes
-- Basic tag and link deduplication within individual tools 
+- Basic tag and link deduplication within individual tools
