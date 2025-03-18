@@ -70,8 +70,19 @@ def extract_titles_and_summaries(notes):
     summaries = {}
     
     for path, note in notes.items():
-        content = note["content"]
-        filename = note["filename"]
+        # Handle different note formats
+        if isinstance(note, dict) and "content" in note:
+            content = note["content"]
+            # Try to get filename from the note dictionary
+            if "filename" in note:
+                filename = note["filename"]
+            else:
+                # Extract filename from path
+                filename = os.path.basename(path)
+        else:
+            # In case note is directly a string
+            content = note
+            filename = os.path.basename(path)
         
         # Extract title - first use H1 if available, else use filename
         title = os.path.splitext(filename)[0]
@@ -96,7 +107,14 @@ def extract_titles_and_summaries(notes):
 def find_relevant_notes(target_path, notes, summaries, max_notes=5):
     """Find relevant notes for a target note using OpenAI API."""
     target_note = notes[target_path]
-    target_content = target_note["content"]
+    
+    # Handle different note formats for target note
+    if isinstance(target_note, dict) and "content" in target_note:
+        target_content = target_note["content"]
+    else:
+        # In case target_note is directly a string
+        target_content = target_note
+    
     target_summary = summaries[target_path]
     
     # Get random sample of other notes (excluding the target)
@@ -196,8 +214,15 @@ def save_notes(notes):
     
     for path, note in notes.items():
         try:
+            # Handle different note formats
+            if isinstance(note, dict) and "content" in note:
+                content = note["content"]
+            else:
+                # In case note is directly a string
+                content = note
+                
             with open(path, "w", encoding="utf-8") as f:
-                f.write(note["content"])
+                f.write(content)
             saved += 1
         except Exception as e:
             print(f"Error saving {path}: {str(e)}")
@@ -242,7 +267,15 @@ def main():
     for path in note_paths:
         try:
             # Extract existing links to avoid duplicate linking
-            content = notes[path]["content"]
+            # Handle different note formats
+            if isinstance(notes[path], dict) and "content" in notes[path]:
+                content = notes[path]["content"]
+            else:
+                # In case the note is directly a string
+                content = notes[path]
+                # Ensure notes[path] is in the right format for later updates
+                notes[path] = {"content": content}
+                
             current_links = utils.extract_existing_links(content)
             
             # Find relevant notes
@@ -261,8 +294,15 @@ def main():
             new_link_entries = []
             for rel_note in relevant_notes:
                 related_path = rel_note["path"]
-                related_filename = notes[related_path]["filename"]
-                note_name = os.path.splitext(related_filename)[0]
+                # Handle both dictionary formats 
+                if isinstance(notes[related_path], dict) and "filename" in notes[related_path]:
+                    # Standard format from genai_linker.load_notes
+                    related_filename = notes[related_path]["filename"]
+                    note_name = os.path.splitext(related_filename)[0]
+                else:
+                    # Alternative format or directly from obsidian_enhance.py
+                    # Extract filename from the path
+                    note_name = os.path.splitext(os.path.basename(related_path))[0]
                 
                 # Skip if already linked in the document
                 if note_name in current_links:
@@ -304,4 +344,4 @@ def main():
     return saved
 
 if __name__ == "__main__":
-    main() 
+    main()

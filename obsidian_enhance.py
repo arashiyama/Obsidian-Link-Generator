@@ -423,9 +423,25 @@ def run_custom_genai_linking(notes, tracking_data, num_notes=100, force_all=Fals
             # Create new link entries for relevant notes
             new_link_entries = []
             for rel_note in relevant_notes:
-                related_path = rel_note["path"]
-                related_filename = notes[related_path]["filename"]
-                note_name = os.path.splitext(related_filename)[0]
+                try:
+                    related_path = rel_note["path"]
+                    
+                    # Skip if the related path doesn't exist in our notes dictionary
+                    if related_path not in notes:
+                        print(f"Warning: Related note path not found in notes collection: {related_path}")
+                        continue
+                    
+                    # Handle different note formats
+                    if isinstance(notes[related_path], dict) and "filename" in notes[related_path]:
+                        # Standard format with filename field
+                        related_filename = notes[related_path]["filename"]
+                        note_name = os.path.splitext(related_filename)[0]
+                    else:
+                        # Extract filename from path if not available in note
+                        note_name = os.path.splitext(os.path.basename(related_path))[0]
+                except Exception as e:
+                    print(f"Warning: Error processing related note: {str(e)}")
+                    continue
                 
                 # Skip if already linked (either in existing GenAI section or anywhere in the note)
                 if note_name in current_links:
