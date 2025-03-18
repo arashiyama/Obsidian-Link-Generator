@@ -1,0 +1,10 @@
+{
+  "id": "auto-link-obsidian",
+  "name": "Auto Link",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Automatically create semantic links between notes based on content, tags, and AI-powered analysis.",
+  "author": "Jonathan Care",
+  "authorUrl": "https://github.com/jonathancare",
+  "isDesktopOnly": false
+}

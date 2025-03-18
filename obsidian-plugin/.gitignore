@@ -1,0 +1,18 @@
+# npm
+node_modules/
+package-lock.json
+
+# build
+main.js
+*.js.map
+.hotreload
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.iml
+.vscode/*
+!.vscode/tasks.json
